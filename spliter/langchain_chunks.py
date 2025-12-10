@@ -21,15 +21,12 @@ SPLITTERS = {
 # 기본 Splitter (확장자 매핑에 없을 경우)
 DEFAULT_SPLITTER = RecursiveCharacterTextSplitter
 
-def chunk_data(documents, extension: str):
+def chunk_data(documents, ext: str):
     """
     파일 확장자에 따라 다른 Splitter를 자동 선택하여
     문서를 chunking 한다.
     extension 예: '.md', '.pdf', '.txt'
     """
-
-    # 확장자 소문자 통일
-    ext = extension.lower()
 
     # Splitter 선택 (fallback: DEFAULT_SPLITTER)
     splitter_class = SPLITTERS.get(ext, DEFAULT_SPLITTER)

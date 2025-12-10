@@ -1,23 +1,43 @@
+import config.setting
 from langchain_community.vectorstores.utils import filter_complex_metadata
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 
+VECTORDB_DIR = "rag_resources/vectordb/chroma_store"
+
 embedding = OpenAIEmbeddings(model="text-embedding-3-large")
 
-def create_vector_db(chunks):
-    chunks = filter_complex_metadata(chunks)
-    vectordb = Chroma.from_documents(chunks, embedding)
+
+def get_temp_vectordb(chunked_data):
+    vectordb = Chroma.from_documents(chunked_data, embedding)
     return vectordb
 
-def get_similary_vector(query: str):
-    vector_query = embedding.embed_query(query)
+
+def build_or_update_vectordb(chunked_docs):
+    
     vectordb = Chroma(
-        persist_directory="./chroma_store",
+        embedding_function=embedding,
+        persist_directory=VECTORDB_DIR
+    )
+
+    # add_documents()는 자동 저장됨
+    vector_ids = vectordb.add_documents(chunked_docs)
+
+    return vector_ids
+
+
+def get_retriever_from_temp(vectordb):
+    return vectordb.as_retriever(search_kwargs={"k": 5}, search_type="similarity")
+
+
+def get_retriever(query: str):
+    vectordb = Chroma(
+        persist_directory=VECTORDB_DIR,
         embedding_function=embedding
     )
-    results = vectordb.similarity_search_by_vector(vector_query, k=5)
-    docs = [doc.page_content for doc in results]
-    return docs
+
+    return vectordb.as_retriever(search_kwargs={"k": 5}, search_type="similarity")
+
     
 
 
