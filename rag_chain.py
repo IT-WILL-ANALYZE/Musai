@@ -96,7 +96,7 @@ def get_llm_response(query, history):
             "history": lambda x: x["history"],
             "context": lambda x: retriever.invoke(x["question"])
         }
-        | get_prompt("rag_test.txt")
+        | get_prompt("qa_assistent.txt")
         | llm
         | StrOutputParser()
     )
