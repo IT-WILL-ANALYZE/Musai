@@ -10,11 +10,6 @@ from langchain_core.output_parsers import StrOutputParser
 def get_ext(file_url): 
     return "." + file_url.lower().split(".")[-1]
 
-# 프롬프트
-def load_prompt_from_file(path): 
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
-
 
 # 청크데이터 
 def get_chunked_docs(file_url):
