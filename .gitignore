@@ -50,8 +50,11 @@ rag_resources/vectordb/chroma_store/
 chroma_store/
 
 # Logs
-*.log
+# Logs
 logs/
+!logs/
+!logs/.gitkeep
+*.log
 
 # Testing
 .pytest_cache/
