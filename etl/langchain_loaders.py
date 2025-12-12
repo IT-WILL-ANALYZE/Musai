@@ -2,6 +2,7 @@ import json
 import os
 from datetime import datetime
 from loguru import logger
+from langchain_core.documents import Document
 from langchain_community.document_loaders import (
     UnstructuredMarkdownLoader,
     UnstructuredFileLoader,
@@ -53,6 +54,66 @@ def check_data(file_url: str):
 
 
 # ----------------------------------------------------
+# LLM이 반환한 table JSON을 LangChain Document list로 변환
+# ----------------------------------------------------
+def parse_table_json(
+    table_result: str,
+    source: str = None,
+    page: int | None = None
+    ):
+    
+    if not table_result:
+        return []
+
+    if isinstance(table_result, str) and table_result.strip() == "NO_TABLE":
+        return []
+
+    try:
+        if isinstance(table_result, str):
+            table_data = json.loads(table_result)
+        else:
+            table_data = table_result
+    except Exception as e:
+        logger.error("Failed to parse table JSON")
+        logger.debug(table_result)
+        raise
+
+    if not isinstance(table_data, list):
+        raise ValueError("Table JSON must be a list of rows")
+
+    table_docs = []
+
+    for idx, row in enumerate(table_data):
+        if not isinstance(row, dict):
+            continue
+
+        # row를 사람이 읽기 쉬운 텍스트로 변환
+        content = " | ".join(
+            f"{k}: {v}" for k, v in row.items()
+        )
+
+        metadata = {
+            "type": "table",
+            "row_index": idx,
+        }
+
+        if source:
+            metadata["source"] = source
+        if page is not None:
+            metadata["page"] = page
+
+        table_docs.append(
+            Document(
+                page_content=content,
+                metadata=metadata
+            )
+        )
+
+    logger.info(f"Parsed {len(table_docs)} table rows")
+    return table_docs
+
+
+# ----------------------------------------------------
 # 문서 로드
 # ----------------------------------------------------
 def load_data(file_url: str, ext: str, mode=None, strategy=None):
@@ -86,6 +147,7 @@ def load_data(file_url: str, ext: str, mode=None, strategy=None):
             loader = loader_class(file_url)
 
         docs = loader.load()
+        
         logger.success(f"Loaded {len(docs)} documents from {file_url}")
         return docs
 

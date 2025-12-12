@@ -10,7 +10,7 @@ import rag_chain  as rag_chain
 ADMIN_CODE = "musai123"
 save_dir = "rag_resources/uploads"
 if "admin_verified" not in st.session_state:    # 관리자 승인 여부(테스트시 True)
-    st.session_state.admin_verified = False
+    st.session_state.admin_verified = True
 if "test_mode" not in st.session_state:         # 테스트 모드 플래그
     st.session_state.test_mode = False
 if "uploaded_filename" not in st.session_state: # 현재 테스트 중 파일명

@@ -1,7 +1,7 @@
 from loguru import logger
 import config.setting
 import embed.langchain_chroma_embed as chroma_embed
-from etl.langchain_loaders import load_data, save_knowledgebase
+from etl.langchain_loaders import load_data, save_knowledgebase, parse_table_json
 from spliter.langchain_chunks import chunk_data
 from prompts.load_prompt import get_prompt
 from llm.models import get_llm
@@ -16,13 +16,31 @@ def get_ext(file_url):
 # 청크데이터 
 def get_chunked_docs(file_url):
     ext = get_ext(file_url)
-    logger.info(f"Loading and chunking document: {file_url} (ext={ext})")
-
     docs = load_data(file_url, ext)
     chunked_docs = chunk_data(docs, ext)
 
-    logger.debug(f"Chunked docs count: {len(chunked_docs)}")
-    return chunked_docs
+    table_docs = []
+
+    if ext == ".pdf":
+        llm = get_llm("gpt-5")
+
+        page_text = "\n".join(d.page_content for d in docs)
+
+        prompt = get_prompt("find_table_from_pdf.txt")
+        chain = prompt | llm
+
+        result = chain.invoke({"page_text": page_text})
+
+        table_text = result.content if hasattr(result, "content") else result
+
+        if table_text.strip() != "NO_TABLE":
+            table_docs = parse_table_json(
+                table_text,
+                source=file_url
+            )
+
+    return chunked_docs, table_docs
+
 
 
 # vectordb set
