@@ -1,0 +1,16 @@
+아래 텍스트가 구조화된 문서라면 STRUCTURED,
+그렇지 않다면 UNSTRUCTURED로 판단하세요.
+
+STRUCTURED 기준:
+- 질문과 설명이 반복됨
+- 항목명 + 설명 구조
+- 사람이 보면 정리된 설문/목록/QA처럼 보임
+
+출력(JSON만):
+{{
+  "decision": "STRUCTURED" | "UNSTRUCTURED",
+  "structure_type": "qa_pairs" | "list" | "definition" | null
+}}
+
+텍스트:
+{docs_text}

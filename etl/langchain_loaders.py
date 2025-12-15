@@ -54,46 +54,47 @@ def check_data(file_url: str):
 
 
 # ----------------------------------------------------
-# LLM이 반환한 table JSON을 LangChain Document list로 변환
+# LLM이 반환한 구조화 JSON을 LangChain Document list로 변환
+# (table / qa_pairs / list / definition 공용)
 # ----------------------------------------------------
-def parse_table_json(
-    table_result: str,
-    source: str = None,
-    page: int | None = None
-    ):
-    
-    if not table_result:
+def parse_structured_json(
+    structured_result: str | list,
+    source: str | None = None,
+    page: int | None = None,
+    structure_type: str | None = None,
+):
+    if not structured_result:
         return []
 
-    if isinstance(table_result, str) and table_result.strip() == "NO_TABLE":
-        return []
-
+    # JSON 파싱
     try:
-        if isinstance(table_result, str):
-            table_data = json.loads(table_result)
+        if isinstance(structured_result, str):
+            structured_data = json.loads(structured_result)
         else:
-            table_data = table_result
-    except Exception as e:
-        logger.error("Failed to parse table JSON")
-        logger.debug(table_result)
-        raise
+            structured_data = structured_result
+    except Exception:
+        logger.error("Failed to parse structured JSON")
+        logger.debug(structured_result)
+        return []
 
-    if not isinstance(table_data, list):
-        raise ValueError("Table JSON must be a list of rows")
+    if not isinstance(structured_data, list):
+        logger.warning("Structured JSON is not a list")
+        return []
 
-    table_docs = []
+    docs: list[Document] = []
 
-    for idx, row in enumerate(table_data):
+    for idx, row in enumerate(structured_data):
         if not isinstance(row, dict):
             continue
 
-        # row를 사람이 읽기 쉬운 텍스트로 변환
+        # 사람이 읽기 쉬운 텍스트로 변환
         content = " | ".join(
-            f"{k}: {v}" for k, v in row.items()
+            f"{k}: {v}" for k, v in row.items() if v
         )
 
         metadata = {
-            "type": "table",
+            "type": "structured",
+            "structure_type": structure_type,
             "row_index": idx,
         }
 
@@ -102,15 +103,19 @@ def parse_table_json(
         if page is not None:
             metadata["page"] = page
 
-        table_docs.append(
+        docs.append(
             Document(
                 page_content=content,
                 metadata=metadata
             )
         )
 
-    logger.info(f"Parsed {len(table_docs)} table rows")
-    return table_docs
+    logger.info(
+        f"Parsed {len(docs)} structured rows "
+        f"(type={structure_type})"
+    )
+
+    return docs
 
 
 # ----------------------------------------------------
@@ -144,7 +149,7 @@ def load_data(file_url: str, ext: str, mode=None, strategy=None):
         elif "Unstructured" in loader_class.__name__:
             loader = loader_class(file_url, mode=mode, strategy=strategy)
         else:
-            loader = loader_class(file_url)
+            loader = loader_class(file_url, mode=mode)
 
         docs = loader.load()
         

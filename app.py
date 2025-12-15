@@ -15,6 +15,8 @@ if "test_mode" not in st.session_state:         # 테스트 모드 플래그
     st.session_state.test_mode = False
 if "uploaded_filename" not in st.session_state: # 현재 테스트 중 파일명
     st.session_state.uploaded_filename = ""
+if "file_structured" not in st.session_state:   # 업로드파일 구조화 여부(표)
+    st.session_state.file_structured = False
 if "vectordb" not in st.session_state:          # 현재 vectordb
     st.session_state.vectordb = ""
 if "uploader_version" not in st.session_state:  # file_uploader 초기화 key
@@ -25,7 +27,7 @@ if "uploader_version" not in st.session_state:  # file_uploader 초기화 key
 # ------------------------------
 def creatVectordb(file_url):
     with st.spinner("임베딩 진행 중..."):
-        success, vectordb = rag_chain.get_vectordb(file_url)
+        success, vectordb = rag_chain.get_vectordb(file_url, st.session_state.file_structured)
         if success:
             st.success("벡터DB 생성 성공!")
             st.session_state.vectordb = vectordb
@@ -36,7 +38,7 @@ def creatVectordb(file_url):
 def adminChunkRag(file_url):
     if st.session_state.admin_verified and st.session_state.test_mode:
         with st.spinner("청킹 진행 중..."):
-            etl_data = rag_chain.get_chunked_docs(file_url)
+            etl_data = rag_chain.get_chunked_docs(file_url, st.session_state.file_structured)
             
         st.success("ETL 완료! 아래는 청킹 결과입니다.")
         chunks = etl_data
@@ -51,7 +53,7 @@ def adminChunkRag(file_url):
 def saveVectordb():
     if st.session_state.admin_verified and st.session_state.test_mode and st.session_state.vectordb :
         with st.spinner("데이터베이스 저장 중..."):
-            success = rag_chain.set_vectordb(os.path.join(save_dir, st.session_state.uploaded_filename))
+            success = rag_chain.set_vectordb(os.path.join(save_dir, st.session_state.uploaded_filename), st.session_state.file_structured)
             if success:
                 st.success("저장 성공!")
             else:
@@ -105,6 +107,9 @@ def show_upload_file():
         if os.path.exists(save_path):
             st.error(f"⚠ '{uploaded.name}' 파일은 이미 존재합니다. 테스트 진행시 덮어씌워집니다.")
 
+        if st.toggle("구조화"):
+            st.session_state.file_structured = True
+
         # 테스트 버튼
         if st.button("테스트", key="btn_test", type="primary"):
             st.session_state.test_mode = True
@@ -113,7 +118,7 @@ def show_upload_file():
             os.makedirs(save_dir, exist_ok=True)
             with open(save_path, "wb") as f:
                 f.write(uploaded.getbuffer())
-            st.rerun()          
+            st.rerun()
             
 # ------------------------------
 # 예시 질문

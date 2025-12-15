@@ -12,10 +12,11 @@ embedding = OpenAIEmbeddings(model="text-embedding-3-large")
 # --------------------------------------------------------
 # 임시 vectordb 생성 (메모리 기반)
 # --------------------------------------------------------
-def get_temp_vectordb(chunked_data):
-    logger.info(f"Creating TEMP vectordb (docs={len(chunked_data)})")
+def get_temp_vectordb(chunked_docs):
+    logger.info(f"Creating TEMP vectordb (docs={len(chunked_docs)})")
     try:
-        vectordb = Chroma.from_documents(chunked_data, embedding)
+        chunked_docs = filter_complex_metadata(chunked_docs)
+        vectordb = Chroma.from_documents(chunked_docs, embedding)
         logger.success("TEMP vectordb created successfully")
         return vectordb
     except Exception:
@@ -32,6 +33,7 @@ def build_or_update_vectordb(chunked_docs):
     )
 
     try:
+        chunked_docs = filter_complex_metadata(chunked_docs)
         vectordb = Chroma(
             embedding_function=embedding,
             persist_directory=VECTORDB_DIR
