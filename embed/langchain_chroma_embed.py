@@ -13,14 +13,14 @@ embedding = OpenAIEmbeddings(model="text-embedding-3-large")
 # 임시 vectordb 생성 (메모리 기반)
 # --------------------------------------------------------
 def get_temp_vectordb(chunked_docs):
-    logger.info(f"Creating TEMP vectordb (docs={len(chunked_docs)})")
+    logger.info(f"Start get_temp_vectordb : docs={len(chunked_docs)}")
     try:
         chunked_docs = filter_complex_metadata(chunked_docs)
         vectordb = Chroma.from_documents(chunked_docs, embedding)
-        logger.success("TEMP vectordb created successfully")
+        logger.success(f"Done get_temp_vectordb")
         return vectordb
-    except Exception:
-        logger.exception("Failed to create temporary vectordb")
+    except Exception as e:
+        logger.exception(f"Failed get_temp_vectordb : {e}")
         raise
 
 
@@ -28,9 +28,7 @@ def get_temp_vectordb(chunked_docs):
 # 영구 vectordb 생성 또는 업데이트
 # --------------------------------------------------------
 def build_or_update_vectordb(chunked_docs):
-    logger.info(
-        f"Building/Updating persistent vectordb: {VECTORDB_DIR} | docs={len(chunked_docs)}"
-    )
+    logger.info(f"Start build_or_update_vectordb : [VECTORDB_DIR]={VECTORDB_DIR} [docs]={len(chunked_docs)}")
 
     try:
         chunked_docs = filter_complex_metadata(chunked_docs)
@@ -42,11 +40,10 @@ def build_or_update_vectordb(chunked_docs):
         # add_documents는 자동 저장
         vector_ids = vectordb.add_documents(chunked_docs)
 
-        logger.success(f"Persistent vectordb update complete | added_vectors={len(vector_ids)}")
-
+        logger.success(f"Done build_or_update_vectordb : [vector_ids]={len(vector_ids)}")
         return vector_ids
-    except Exception:
-        logger.exception("Failed to build/update persistent vectordb")
+    except Exception as e:
+        logger.exception(f"Failed build_or_update_vectordb : {e}")
         raise
 
 
@@ -54,14 +51,17 @@ def build_or_update_vectordb(chunked_docs):
 # TEMP vectordb에서 retriever 생성
 # --------------------------------------------------------
 def get_retriever_from_temp(vectordb):
-    logger.debug("Creating retriever from TEMP vectordb")
+    logger.debug(f"Start get_retriever_from_temp")
+    
     try:
-        return vectordb.as_retriever(
+        retriever = vectordb.as_retriever(
             search_kwargs={"k": 5},
             search_type="similarity"
         )
-    except Exception:
-        logger.exception("Failed to create retriever from TEMP vectordb")
+        logger.success(f"Done get_retriever_from_temp : [retriever]={retriever}")
+        return retriever
+    except Exception as e:
+        logger.exception(f"Failed get_retriever_from_temp : {e}")
         raise
 
 
@@ -69,7 +69,7 @@ def get_retriever_from_temp(vectordb):
 # Persistent vectordb에서 retriever 생성
 # --------------------------------------------------------
 def get_retriever(query: str):
-    logger.info(f"Loading persistent vectordb and creating retriever | query='{query}'")
+    logger.info(f"Start get_retriever : [query]='{query}'")
 
     try:
         vectordb = Chroma(
@@ -82,9 +82,9 @@ def get_retriever(query: str):
             search_type="similarity"
         )
 
-        logger.debug("Retriever created successfully from persistent vectordb")
+        logger.success(f"Done get_retriever : [retriever]={retriever}")
         return retriever
 
-    except Exception:
-        logger.exception("Failed to load persistent vectordb or create retriever")
+    except Exception as e:
+        logger.exception(f"Failed get_retriever : {e}")
         raise
