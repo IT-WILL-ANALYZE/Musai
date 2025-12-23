@@ -1,6 +1,6 @@
 import streamlit as st
 import os as os
-import time
+import etl.langchain_loaders as loaders
 import rag_chain  as rag_chain
 
 
@@ -16,7 +16,11 @@ if "test_mode" not in st.session_state:         # 테스트 모드 플래그
 if "uploaded_filename" not in st.session_state: # 현재 테스트 중 파일명
     st.session_state.uploaded_filename = ""
 if "file_structured" not in st.session_state:   # 업로드파일 구조화 여부(표)
-    st.session_state.file_structured = False
+    st.session_state.file_structured = {
+        "mode": None,
+        "strategy": None,
+        "llm": False,
+    }
 if "vectordb" not in st.session_state:          # 현재 vectordb
     st.session_state.vectordb = ""
 if "uploader_version" not in st.session_state:  # file_uploader 초기화 key
@@ -102,23 +106,89 @@ def show_upload_file():
         save_path = os.path.join(save_dir, uploaded.name)
         st.session_state.uploaded_filename = uploaded.name
         st.session_state.test_mode = False
+
+        ext = loaders.get_ext_from_filename(uploaded.name)
+        cfg = loaders.VALID_LOADERS_SETTINGS.get(ext)
+
         st.success(f"파일 선택됨: {uploaded.name}")
 
         if os.path.exists(save_path):
             st.error(f"⚠ '{uploaded.name}' 파일은 이미 존재합니다. 테스트 진행시 덮어씌워집니다.")
 
-        if st.toggle("구조화"):
-            st.session_state.file_structured = True
+        # -------------------------
+        # mode 선택
+        # -------------------------
+        selected_mode = None
+        if cfg and cfg["MODES"]:
+            MODE_ORDER = ["elements", "single", "paged"]
+            mode_options = [m for m in MODE_ORDER if m in cfg["MODES"]]
 
+            mode_key = f"structured_mode_{uploaded.name}"
+            selected_mode = st.radio(
+                "구조화(mode)를 선택해주세요",
+                mode_options,
+                captions=[
+                    "단락 별로 구분" if m == "elements"
+                    else "구분하지 않음" if m == "single"
+                    else "페이지 별로 구분"
+                    for m in mode_options
+                ],
+                key=mode_key,
+                horizontal=True,
+            )
+
+        # -------------------------
+        # strategy 선택
+        # -------------------------
+        selected_strategy = None
+        if cfg and cfg["STRATEGIES"]:
+            STRATEGY_ORDER = ["fast", "hi_res", "ocr_only", "auto"]
+            strategy_options = [s for s in STRATEGY_ORDER if s in cfg["STRATEGIES"]]
+
+            strategy_key = f"structured_strategy_{uploaded.name}"
+            selected_strategy = st.radio(
+                "처리 전략(strategy)을 선택해주세요",
+                strategy_options,
+                captions=[
+                    "일반" if s == "fast"
+                    else "PDF(표, 레이아웃 중요한 경우)" if s == "hi_res"
+                    else "OCR 전용"
+                    for s in strategy_options
+                ],
+                key=strategy_key,
+                horizontal=True,
+            )
+
+        # -------------------------
+        # LLM 구조화 토글
+        # -------------------------
+        st.toggle(
+            "LLM 구조화 작업 요청",
+            key="llm_structured_toggle"
+        )
+
+        st.session_state.file_structured["llm"] = st.session_state.llm_structured_toggle
+
+        # -------------------------
         # 테스트 버튼
+        # -------------------------
         if st.button("테스트", key="btn_test", type="primary"):
             st.session_state.test_mode = True
-            st.session_state.uploader_version += 1  
-            
+            st.session_state.uploader_version += 1
+
+            # 최종 스냅샷 저장
+            st.session_state.file_structured.update({
+                "mode": selected_mode,
+                "strategy": selected_strategy,
+                "llm": st.session_state.llm_structured_toggle,
+            })
+
             os.makedirs(save_dir, exist_ok=True)
             with open(save_path, "wb") as f:
                 f.write(uploaded.getbuffer())
+
             st.rerun()
+
             
 # ------------------------------
 # 예시 질문

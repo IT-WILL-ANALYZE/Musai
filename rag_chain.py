@@ -1,50 +1,48 @@
 from loguru import logger
 import config.setting
-import embed.langchain_chroma_embed as chroma_embed
-from etl.langchain_loaders import load_by_langchain
+import embedders.langchain_chroma_embed as chroma_embed
+from etl.langchain_loaders import load_by_langchain, get_ext_from_filename
 from etl.unstructured_loaders import load_by_unstructured
 from etl.langchain_stores import store_knowledgebase
-from spliter.langchain_chunks import chunk_structured_by_llm, chunk_data
+from chunkers.langchain_chunkers import chunk_structured_by_llm, chunk_data
 from prompts.load_prompt import get_prompt
 from llm.models import get_llm
 from langchain_core.output_parsers import StrOutputParser
 
 
-# 확장자 추출
-def get_ext(file_url): 
-    return "." + file_url.lower().split(".")[-1]
-
 # 청크
-def get_chunked_docs(file_url, file_structured: bool):
+def get_chunked_docs(file_url, file_structured: dict):
     try:
         logger.info(
             f"Start get_chunked_docs : {file_url, file_structured}"
         )
-
-        ext = get_ext(file_url)
         
-        # 1. 기본 로드
-        # docs = load_by_langchain(
-        #     file_url,
-        #     ext,
-        #     mode="elements",
-        #     strategy="fast"
-        # )
-        docs = load_by_unstructured(file_url,ext)
-
-        # 2. normal chunking (항상 수행)
-        chunked_docs = chunk_data(docs, ext)
+        # 1. load
+        text_docs, structured_docs = load_by_langchain(
+            file_url,
+            mode=file_structured["mode"],
+            strategy=file_structured["strategy"]
+        )
         
-        # 3. 구조화(표, 리스트, QA등) 필요한 경우 LLM 모델에게 요청
-        if ext not in ["xlsx", "xls", "csv"] and file_structured: 
-            chunked_docs = chunked_docs + chunk_structured_by_llm(chunked_docs)
+        chunked_docs = []
+        # 2. text 형식 chunking
+        if text_docs :
+            text_chunks = chunk_data(text_docs, get_ext_from_filename(file_url))
+            chunked_docs.extend(text_chunks)
+            logger.debug(f"chunk_data [text_chunks] : {text_chunks}")
+        
+        # 3-1. LLM 모델에게 구조화 요청
+        if structured_docs :
+            structured_chunks = chunk_structured_by_llm(structured_docs)
+            chunked_docs.extend(structured_chunks)
+            logger.debug(f"chunk_data [structured_chunks] : {chunked_docs}")
         
         logger.success(f"Done get_chunked_docs : {len(chunked_docs)}")
+        return chunked_docs
     except Exception as e:
         logger.exception(f"Failed get_chunked_docs : {e}")
-
-        return chunked_docs
-
+        raise
+        
 
 # vectordb set
 def set_vectordb(file_url, file_structured):
