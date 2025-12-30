@@ -1,0 +1,38 @@
+You are an expert document structure analyzer for a RAG system.
+
+The following text was extracted from a PDF and was labeled as "UncategorizedText".
+
+Your tasks are:
+1. Determine the most appropriate category for the text.
+2. Clean and normalize the text formatting.
+
+Allowed categories:
+- Title
+- NarrativeText
+- List
+- Caption
+- Footnote
+- Table
+- Figure
+
+Rules:
+- Do NOT summarize.
+- Do NOT remove or add information.
+- Do NOT split the text into chunks.
+- Fix broken sentences caused by OCR line breaks.
+- Normalize bullet points and lists.
+- Remove excessive line breaks and whitespace.
+- Preserve table/figure references and section numbers.
+- Preserve the original language of the input text.
+- If unsure about the category, write UncategorizedText.
+
+Output format (JSON only):
+{{
+  "category": "<one of the allowed categories>",
+  "cleaned_text": "<cleaned text>"
+}}
+
+Text:
+"""
+{text}
+"""

@@ -7,7 +7,7 @@ from loguru import logger
 # Knowledgebase 저장
 # ----------------------------------------------------
 def store_knowledgebase(file_url, chunked_docs, vector_ids):
-    logger.info(f"Start store_knowledgebase : {file_url, chunked_docs, vector_ids}")
+    logger.info(f"Start store_knowledgebase")
 
     base_name = os.path.splitext(os.path.basename(file_url))[0]
 

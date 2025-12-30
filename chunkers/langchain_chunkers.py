@@ -1,6 +1,7 @@
 import config.setting
 import json
 from loguru import logger
+from langchain_core.documents import Document
 from llm.models import get_llm
 from prompts.load_prompt import get_prompt
 from etl.langchain_parsers import clean_llm_json, parse_structured_json
@@ -26,31 +27,118 @@ SPLITTERS = {
 # 기본 Splitter (fallback)
 DEFAULT_SPLITTER = RecursiveCharacterTextSplitter
 
+# 청킹하지 않는 구조
+NO_CHUNK_CATEGORIES = {"Table", "Figure", "Image", "UncategorizedText"}
+MAX_BLOCK_CHARS = 1200   # SemanticBlock 최대 허용 길이
+SEMANTIC_OVERLAP = 100  # 의미 보존용
+
 def chunk_data(documents, ext: str):
     logger.info(f"Start chunk_data : ext={ext}, documents={len(documents)}")
-    """
-    파일 확장자에 따라 적절한 Splitter를 선택하여 chunking을 수행.
-    """
-    # Splitter 선택
-    splitter_class = SPLITTERS.get(ext, DEFAULT_SPLITTER)
-    logger.debug(f"Using splitter: {splitter_class.__name__}")
 
-    try:
-        # Splitter 인스턴스 생성
+    splitter_class = SPLITTERS.get(ext, DEFAULT_SPLITTER)
+    logger.info(f"Using splitter: {splitter_class.__name__}")
+
+    collected_docs = []
+    llm = get_llm("gpt-4.1-mini")
+
+    for doc in documents:
+        category = doc.metadata.get("category")
+        base_index = float(doc.metadata.get("index", 0))
+
+        # -----------------------------
+        # 1️⃣ NO-CHUNK CATEGORY
+        # -----------------------------
+        if category in NO_CHUNK_CATEGORIES or category == "llm_friendly_table":
+            collected_docs.append(doc)
+
+            # Table → LLM 친화 Table 생성
+            if category == "Table":
+                try:
+                    prompt = get_prompt("chunk_table.txt")
+                    chain = prompt | llm
+                    llm_response = chain.invoke(
+                        {"text": doc.page_content}
+                    ).content.strip()
+
+                    collected_docs.append(
+                        Document(
+                            page_content=llm_response,
+                            metadata={
+                                **doc.metadata,
+                                "index": base_index + 0.01,
+                                "parent_index": base_index,
+                                "content_type": "llm_friendly_table",
+                            }
+                        )
+                    )
+                except Exception:
+                    logger.exception("chunk_table_by_llm failed")
+
+            continue
+
+        # -----------------------------
+        # 2️⃣ SemanticBlock 전용 전략
+        # -----------------------------
+        if category == "SemanticBlock":
+            text = doc.page_content
+
+            # 짧으면 그대로 유지
+            if len(text) <= MAX_BLOCK_CHARS:
+                collected_docs.append(doc)
+                continue
+
+            # 🔹 길면 의미 단위 분할
+            splitter = splitter_class(
+                chunk_size=MAX_BLOCK_CHARS,
+                chunk_overlap=SEMANTIC_OVERLAP,
+            )
+            chunks = splitter.split_text(text)
+
+            for i, chunk_text in enumerate(chunks):
+                collected_docs.append(
+                    Document(
+                        page_content=chunk_text,
+                        metadata={
+                            **doc.metadata,
+                            "index": base_index + (i * 0.001),
+                            "parent_index": base_index,
+                            "semantic_split": True,
+                        }
+                    )
+                )
+            continue
+
+        # -----------------------------
+        # 3️⃣ 기타 일반 텍스트 (기존 방식)
+        # -----------------------------
         splitter = splitter_class(
             chunk_size=500,
-            chunk_overlap=50
+            chunk_overlap=50,
         )
+        chunks = splitter.split_documents([doc])
 
-        # chunk 실행
-        chunks = splitter.split_documents(documents)
-        logger.info(f"Done chunk_data : total_chunks={len(chunks)}")
+        for i, ch in enumerate(chunks):
+            ch.metadata["index"] = base_index + (i * 0.001)
+            ch.metadata["parent_index"] = base_index
+            collected_docs.append(ch)
 
-        return chunks
+    # -----------------------------
+    # 안전장치
+    # -----------------------------
+    safe_docs = []
+    for d in collected_docs:
+        if isinstance(d, Document):
+            safe_docs.append(d)
+        else:
+            logger.error(
+                f"Non-Document dropped in chunk_data: type={type(d)} value={str(d)[:80]}"
+            )
 
-    except Exception:
-        logger.exception(f"Failed chunk_data: {ext}")
-        raise
+    safe_docs.sort(key=lambda d: float(d.metadata.get("index", 0)))
+
+    logger.info(f"Done chunk_data : total_docs={len(safe_docs)}")
+    return safe_docs
+
 
 
 def chunk_structured_by_llm(chunked_docs):

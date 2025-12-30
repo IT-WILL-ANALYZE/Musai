@@ -1,6 +1,10 @@
 from loguru import logger
 import config.setting as config
-from langchain_core.messages import AIMessage
+from etl.langchain_parsers import clean_llm_json
+from langchain_core.documents import Document
+import json
+from prompts.load_prompt import get_prompt
+from llm.models import get_llm
 from langchain_community.document_loaders import (
     UnstructuredMarkdownLoader,
     UnstructuredPDFLoader,
@@ -97,46 +101,136 @@ def normalize_loader_options(ext: str, mode=None, strategy=None):
 # ----------------------------------------------------
 def load_by_langchain(file_url: str, mode=None, strategy=None):
     ext = get_ext_from_filename(file_url)
-    logger.info(f"Start load_by_langchain : {file_url, mode, strategy}")
+    logger.info(f"Start load_by_langchain : {file_url}")
 
     cfg = VALID_LOADERS_SETTINGS[ext]
     loader_class = cfg["LOADER"]
 
     mode, strategy = normalize_loader_options(ext, mode, strategy)
-    logger.info(f"set loader : [ext] {ext} || [mode] {mode} || [strategy] {strategy}" )
-    
+    logger.info(f"Loader options → ext={ext}, mode={mode}, strategy={strategy}")
+
     loader_kwargs = {}
-    if mode is not None:
+    if mode:
         loader_kwargs["mode"] = mode
-    if strategy is not None:
+    if strategy:
         loader_kwargs["strategy"] = strategy
-        if strategy == "hi_res" :
-            poppler_path = config.get_bin_path("poppler")   # 이미지로 변경
+        if strategy == "hi_res":
+            poppler_path = config.get_bin_path("poppler")
             config.get_bin_path("tesseract")                # 이미지에서 단어 및 형태 추출
             loader_kwargs["poppler_path"] = poppler_path 
             loader_kwargs["ocr_languages"] = config.get_bin_path("kor+eng")
 
     loader = loader_class(file_url, **loader_kwargs)
-    docs = loader.load()
+    raw_docs = loader.load()
 
-    # 2. 데이터 분류를 위한 리스트 준비
-    text_docs = []       # 일반 텍스트 (category 없거나 Title, NarrativeText 등)
-    structured_docs = [] # 구조화 데이터 (Table, Figure 등)
+    # -----------------------------
+    # 설정
+    # -----------------------------
+    CONTEXT_CATEGORIES = {"Title", "NarrativeText", "List", "Caption"}
+    STRUCTURED_CATEGORIES = {"Table", "Figure", "Image"}
 
-    # 3. Category 기반 분류 로직
-    for doc in docs:
-        category = doc.metadata.get("category")
-        
-        # 1. 구조화/정제 대상 데이터
-        if category in ["Table", "Figure", "Image", "UncategorizedText"]:
-            structured_docs.append(doc)
-        
-        # 2. 일반 텍스트 데이터
-        else:
-            text_docs.append(doc)
+    llm = get_llm("gpt-4.1-mini")
 
-    logger.info(f"Done: load_by_langchain Text({len(text_docs)}) || Structured({len(structured_docs)})")
-    
-    return text_docs, structured_docs
+    merged_docs = []
+    index = 0
+    current_title = None
+    current_block = []
+    current_categories = []
+
+    # -----------------------------
+    # 내부 함수: 블록 flush
+    # -----------------------------
+    def flush_block():
+        nonlocal index, current_block, current_categories, current_title
+
+        if not current_block:
+            return
+
+        block_text = "\n".join(current_block)
+        final_category = "SemanticBlock"
+        inferred_title = current_title
+        if not inferred_title:
+            # title이 아예 없으면 블록 첫 문장을 title처럼 사용(너무 길면 자름)
+            inferred_title = (current_block[0][:80] if current_block else None)
+
+        if "UncategorizedText" in current_categories:
+            prompt = get_prompt("UNCATEGORIZED_CLASSIFY.txt")
+            response = clean_llm_json(
+                (prompt | llm).invoke({
+                    "title": inferred_title,
+                    "text": block_text[:4000]
+                })
+            )
+            try:
+                result = json.loads(response)
+                logger.info(f"[flush_block] LLM response {result}")
+                final_category = result.get("category", final_category)
+                block_text = result.get("cleaned_text", block_text)
+            except Exception as e:
+                logger.warning(f"[flush_block] LLM classify failed: {e}")
+
+        merged_docs.append(
+            Document(
+                page_content=block_text,
+                metadata={
+                    "source": file_url,
+                    "title": inferred_title,
+                    "category": final_category,
+                    "included_categories": list(set(current_categories)),
+                    "index": index,
+                }
+            )
+        )
+
+        index += 1
+        current_block.clear()
+        current_categories.clear()
+
+    # -----------------------------
+    # 메인 루프
+    # -----------------------------
+    for doc in raw_docs:
+        category = doc.metadata.get("category", "UncategorizedText")
+        text = doc.page_content.strip()
+
+        # 1️⃣ Title 등장 → 새 의미 블록 시작
+        if category == "Title":
+            flush_block()
+            current_title = text
+            current_block.append(text)
+            current_categories.append("Title")
+            continue
+
+        # 2️⃣ 구조화 데이터는 단독 문서
+        if category in STRUCTURED_CATEGORIES:
+            flush_block()
+            merged_docs.append(
+                Document(
+                    page_content=text,
+                    metadata={
+                        "source": file_url,
+                        "title": current_title,
+                        "category": category,
+                        "index": index,
+                    }
+                )
+            )
+            index += 1
+            continue
+
+        # 3️⃣ 일반 / Uncategorized → 현재 블록에 포함
+        # Title이 아직 없는데 문맥성 카테고리면 fallback title로 사용
+        if current_title is None and category in CONTEXT_CATEGORIES:
+            current_title = text  # fallback title
+        current_block.append(text)
+        current_categories.append(category)
+
+    # 마지막 블록 처리
+    flush_block()
+
+    logger.success(f"Done load_by_langchain : total_docs={len(merged_docs)}")
+    return merged_docs
+
+
 
 

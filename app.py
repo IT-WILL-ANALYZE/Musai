@@ -1,7 +1,10 @@
 import streamlit as st
+import copy
+import uuid
 import os as os
 import etl.langchain_loaders as loaders
 import rag_chain  as rag_chain
+from langchain_core.documents import Document
 
 
 # ------------------------------
@@ -9,59 +12,183 @@ import rag_chain  as rag_chain
 # ------------------------------
 ADMIN_CODE = "musai123"
 save_dir = "rag_resources/uploads"
-if "admin_verified" not in st.session_state:    # 관리자 승인 여부(테스트시 True)
+
+if "admin_step_up" not in st.session_state:
+    st.session_state.admin_step_up = 0 # 0 : 기본  / 1 : 청킹 / 2 : 임베딩 / 3: 테스트
+if "admin_verified" not in st.session_state:
     st.session_state.admin_verified = True
-if "test_mode" not in st.session_state:         # 테스트 모드 플래그
+if "test_mode" not in st.session_state:
     st.session_state.test_mode = False
-if "uploaded_filename" not in st.session_state: # 현재 테스트 중 파일명
-    st.session_state.uploaded_filename = ""
-if "file_structured" not in st.session_state:   # 업로드파일 구조화 여부(표)
-    st.session_state.file_structured = {
-        "mode": None,
-        "strategy": None,
-        "llm": False,
-    }
-if "vectordb" not in st.session_state:          # 현재 vectordb
-    st.session_state.vectordb = ""
-if "uploader_version" not in st.session_state:  # file_uploader 초기화 key
+if "uploader_version" not in st.session_state:
     st.session_state.uploader_version = 0
+if "uploaded_filename" not in st.session_state:
+    st.session_state.uploaded_filename = ""
+if "file_structured" not in st.session_state:
+    st.session_state.file_structured = {"mode": None, "strategy": None}
+if "chunked_docs" not in st.session_state:
+    st.session_state.chunked_docs = []
+if "original_chunked_docs" not in st.session_state:
+    st.session_state.original_chunked_docs = []
+if "vectordb" not in st.session_state:
+    st.session_state.vectordb = ""
+
 
 # ------------------------------
 # 관리자 - rag 생성
 # ------------------------------
-def creatVectordb(file_url):
+def create_vectordb(file_url):
     with st.spinner("임베딩 진행 중..."):
-        success, vectordb = rag_chain.get_vectordb(file_url, st.session_state.file_structured)
+        success, vectordb = rag_chain.get_vectordb(st.session_state.chunked_docs)
         if success:
-            st.success("벡터DB 생성 성공!")
             st.session_state.vectordb = vectordb
+            st.success("벡터DB 생성 성공!")
         else:
             st.error("벡터DB 생성 실패!")
 
 
-def adminChunkRag(file_url):
+def admin_chunk_rag(file_url):
     if st.session_state.admin_verified and st.session_state.test_mode:
         with st.spinner("청킹 진행 중..."):
-            etl_data = rag_chain.get_chunked_docs(file_url, st.session_state.file_structured)
-            
-        st.success("ETL 완료! 아래는 청킹 결과입니다.")
-        chunks = etl_data
+            chunks = rag_chain.get_chunked_docs(
+                file_url, st.session_state.file_structured
+            )
 
-        st.subheader("🧩 Chunked Documents")
-        for idx, doc in enumerate(chunks):
-            with st.expander(f"Chunk {idx+1}", expanded=False):
-                st.markdown(f"**📄 Source:** `{doc.metadata.get('source', 'N/A')}`")
-                st.markdown("---")
-                st.text(doc.page_content)
+        st.session_state.admin_step_up = 1      # 임베딩 버튼 생성
+        st.session_state.chunked_docs = chunks  # chunk 세션 관리
+        st.session_state.original_chunked_docs = copy.deepcopy(chunks)
 
-def saveVectordb():
+        render_chunk_manager()
+        st.rerun()
+
+
+def reset_chunks():
+    if "original_chunked_docs" not in st.session_state:
+        st.warning("원본 Chunk 정보가 없습니다.")
+        return
+
+    # 1️⃣ 원본을 deep copy
+    restored_docs = copy.deepcopy(
+        st.session_state.original_chunked_docs
+    )
+
+    # 2️⃣ UUID 재발급 (⭐ 매우 중요)
+    for doc in restored_docs:
+        doc.metadata["id"] = str(uuid.uuid4())
+
+    # 3️⃣ 현재 chunk 교체
+    st.session_state.chunked_docs = restored_docs
+
+    # 4️⃣ text_area 관련 state 전부 제거
+    keys_to_delete = [
+        key for key in st.session_state.keys()
+        if key.startswith("chunk_edit_")
+    ]
+
+    for key in keys_to_delete:
+        del st.session_state[key]
+
+
+def save_vectordb():
     if st.session_state.admin_verified and st.session_state.test_mode and st.session_state.vectordb :
         with st.spinner("데이터베이스 저장 중..."):
-            success = rag_chain.set_vectordb(os.path.join(save_dir, st.session_state.uploaded_filename), st.session_state.file_structured)
+            success = rag_chain.set_vectordb(os.path.join(save_dir, st.session_state.uploaded_filename), st.session_state.chunked_docs)
             if success:
                 st.success("저장 성공!")
             else:
                 st.error("저장 실패!")
+
+# -------------------------------------------------
+# Chunk Manager UI
+# -------------------------------------------------
+def render_chunk_manager():
+    if "chunked_docs" not in st.session_state:
+        st.session_state.chunked_docs = []
+
+    if not st.session_state.chunked_docs:
+        st.info("청킹된 문서가 없습니다.")
+        return
+
+    st.subheader("🧩 Chunk 관리자")
+
+    delete_target_id = None 
+
+    chunk_no = 1
+    for doc in st.session_state.chunked_docs:
+        chunk_id = doc.metadata.get("id")
+
+        # 안전장치: id 없으면 생성
+        if not chunk_id:
+            chunk_id = str(uuid.uuid4())
+            doc.metadata["id"] = chunk_id
+
+        with st.expander(f"Chunk {chunk_no}", expanded=False):
+            chunk_no = chunk_no + 1
+            st.markdown(f"**관련 항목:** `{doc.metadata.get('title', 'N/A')}`")
+            st.markdown(f"**카테고리:** `{doc.metadata.get('category', 'N/A')}`")
+
+            edited_text = st.text_area(
+                "Chunk Content",
+                value=doc.page_content,
+                height=200,
+                key=f"chunk_edit_{chunk_id}"
+            )
+
+            # ✏️ 내용 수정 반영
+            if edited_text != doc.page_content:
+                doc.page_content = edited_text
+
+            # 🗑 삭제 버튼
+            if st.button("🗑 삭제", key=f"delete_{chunk_id}"):
+                delete_target_id = chunk_id
+
+    # -----------------------------
+    # 삭제 처리 (루프 밖에서!)
+    # -----------------------------
+    if delete_target_id:
+        st.session_state.chunked_docs = [
+            d for d in st.session_state.chunked_docs
+            if d.metadata.get("id") != delete_target_id
+        ]
+        st.rerun()
+
+
+    # -------------------------------------------------
+    # Chunk 추가 (항상 뒤에 append)
+    # -------------------------------------------------
+    st.subheader("➕ Chunk 추가")
+    with st.form("add_chunk_form", clear_on_submit=True):
+        new_chunk_text = st.text_area(
+            "새 Chunk 내용",
+            height=150
+        )
+
+        submitted = st.form_submit_button("➕ Chunk 추가")
+
+        if submitted:
+            if new_chunk_text.strip():
+                st.session_state.chunked_docs.append(
+                    Document(
+                        page_content=new_chunk_text,
+                        metadata={
+                            "id": str(uuid.uuid4()),
+                            "source": "manual",
+                            "category": "Manual"
+                        }
+                    )
+                )
+                st.rerun()
+            else:
+                st.warning("Chunk 내용이 비어 있습니다.")
+
+
+    # -------------------------------------------------
+    # 원본 복구
+    # -------------------------------------------------
+    st.divider()
+    if st.button("↩ 원본 Chunk로 되돌리기"):
+        reset_chunks()
+        st.rerun()
+
 
 # ------------------------------
 # 다이어로그(Modal)
@@ -160,19 +287,10 @@ def show_upload_file():
             )
 
         # -------------------------
-        # LLM 구조화 토글
-        # -------------------------
-        st.toggle(
-            "LLM 구조화 작업 요청",
-            key="llm_structured_toggle"
-        )
-
-        st.session_state.file_structured["llm"] = st.session_state.llm_structured_toggle
-
-        # -------------------------
         # 테스트 버튼
         # -------------------------
         if st.button("테스트", key="btn_test", type="primary"):
+            st.session_state.admin_step_up = 0
             st.session_state.test_mode = True
             st.session_state.uploader_version += 1
 
@@ -180,7 +298,6 @@ def show_upload_file():
             st.session_state.file_structured.update({
                 "mode": selected_mode,
                 "strategy": selected_strategy,
-                "llm": st.session_state.llm_structured_toggle,
             })
 
             os.makedirs(save_dir, exist_ok=True)
@@ -314,12 +431,14 @@ if not user_first_interaction and not has_message_history:
 
         file_url = save_dir + "/" + st.session_state.uploaded_filename
         
-        if st.button("🧩 청킹 실행"):
-            adminChunkRag(file_url)
-
-        if st.button("🧬 임베딩 실행"):
-            creatVectordb(file_url)
-
+        if st.session_state.admin_step_up == 0 :
+            if st.button("🧩 청킹 실행"):
+                admin_chunk_rag(file_url)
+        elif st.session_state.admin_step_up == 1 :
+            st.success("ETL 완료! 아래에서 Chunk를 관리할 수 있습니다.")
+            if st.button("🧬 임베딩 실행"):
+                create_vectordb(file_url)
+            render_chunk_manager()
 
     # 아직 채팅 히스토리가 없으므로 여기서 종료
     st.stop()
@@ -342,12 +461,8 @@ if st.session_state.admin_verified and st.session_state.test_mode and st.session
         f"&nbsp;:small[:gray[:material/file_open: 적용된 파일]] : {st.session_state.uploaded_filename}"    
     )
     
-    st.button(
-        "save",
-        icon=":material/save:",
-        on_click=saveVectordb,
-        use_container_width=True
-    )
+    if st.button("💾 vectorDB에 저장"):
+        save_vectordb()
         
 
 # chat_input 에서 바로 입력이 안 들어온 경우
