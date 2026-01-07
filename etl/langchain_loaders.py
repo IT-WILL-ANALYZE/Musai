@@ -1,7 +1,9 @@
 from loguru import logger
 import config.setting as config
+from bs4 import BeautifulSoup
 from etl.langchain_parsers import clean_llm_json
 from langchain_core.documents import Document
+from typing import List
 import json
 from prompts.load_prompt import get_prompt
 from llm.models import get_llm
@@ -97,6 +99,162 @@ def normalize_loader_options(ext: str, mode=None, strategy=None):
 
 
 # ----------------------------------------------------
+# HTML → Markdown 변환
+# ----------------------------------------------------
+def html_table_to_markdown(html: str) -> str:
+    
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        table = soup.find("table")
+        if not table:
+            return ""
+
+        rows = []
+        for tr in table.find_all("tr"):
+            cells = tr.find_all(["th", "td"])
+            row = [cell.get_text(strip=True) for cell in cells]
+            if row:
+                rows.append(row)
+
+        if len(rows) < 2:
+            return ""
+
+        header = rows[0]
+        body = rows[1:]
+
+        md = []
+        md.append("| " + " | ".join(header) + " |")
+        md.append("| " + " | ".join(["---"] * len(header)) + " |")
+
+        for row in body:
+            md.append("| " + " | ".join(row) + " |")
+
+        return "\n".join(md)
+
+    except Exception as e:
+        logger.warning(f"[html_table_to_markdown] failed: {e}")
+        return ""
+    
+    
+def merge_docs_by_categories(docs: List[Document]) -> List[Document]:
+    CONTINUE_CATEGORIES = {"TableChunk", "UncategorizedText"}
+    merged_docs: List[Document] = []
+
+    buffer: List[Document] = []
+    buffer_category = None
+    index = 0
+
+    def flush_buffer():
+        nonlocal index, buffer, buffer_category, merged_docs
+
+        if not buffer:
+            return
+
+        # -----------------------
+        # TableChunk → Table 병합
+        # -----------------------
+        if buffer_category in ("TableChunk", "Table"):
+            raw_text = "\n".join(doc.page_content for doc in buffer)
+
+            html = buffer[0].metadata.get("text_as_html", "")
+            markdown_table = html_table_to_markdown(html)
+
+            final_content = (
+                markdown_table if markdown_table else raw_text
+            )
+
+            # 불필요한 대용량 필드 제거
+            clean_metadata = {
+                k: v for k, v in buffer[0].metadata.items()
+                if k not in {"orig_elements", "text_as_html"}
+            }
+
+            merged_docs.append(
+                Document(
+                    page_content=final_content,
+                    metadata={
+                        **clean_metadata,
+                        "category": "Table",
+                        "merged_from": "TableChunk",
+                        "index": index,
+                        "table_format": "markdown" if markdown_table else "text",
+                    },
+                )
+            )
+            index += 1
+
+        # -----------------------
+        # UncategorizedText → LLM 분류
+        # -----------------------
+        elif buffer_category == "UncategorizedText":
+            
+            llm = get_llm("gpt-4.1-mini")
+            prompt = get_prompt("UNCATEGORIZED_CLASSIFY.txt")
+
+            block_text = "\n".join(doc.page_content for doc in buffer)[:4000]
+
+            try:
+                response = clean_llm_json(
+                    (prompt | llm).invoke({"text": block_text})
+                )
+                Categorized_json = json.loads(response)
+                logger.info(f"Uncategorized by LLM : {buffer_category} → {Categorized_json.get("cleaned_category", "UncategorizedText")} || buffer size : {len(buffer)}")
+
+                merged_docs.append(
+                    Document(
+                        page_content=Categorized_json.get("cleaned_text", block_text),
+                        metadata={
+                            **buffer[0].metadata,
+                            "category": Categorized_json.get("cleaned_category", "UncategorizedText"),
+                            "index": index,
+                            "classified_by": "llm",
+                        },
+                    )
+                )
+                index += 1
+
+            except Exception as e:
+                logger.warning(f"Uncategorized by LLM failed: {e}")
+
+                merged_docs.append(
+                    Document(
+                        page_content=block_text,
+                        metadata={
+                            **buffer[0].metadata,
+                            "category": "UncategorizedText",
+                            "index": index,
+                        },
+                    )
+                )
+                index += 1
+
+        buffer = []
+        buffer_category = None
+
+    # -----------------------
+    # Main loop
+    # -----------------------
+    for doc in docs:
+        category = doc.metadata.get("category")
+
+        if category in CONTINUE_CATEGORIES:
+            if buffer_category in (None, category):
+                buffer.append(doc)
+                buffer_category = category
+            else:
+                flush_buffer()
+                buffer.append(doc)
+                buffer_category = category
+        else:
+            flush_buffer()
+            doc.metadata["index"] = index
+            merged_docs.append(doc)
+            index += 1
+
+    flush_buffer()
+    return merged_docs
+
+# ----------------------------------------------------
 # 문서 로드
 # ----------------------------------------------------
 def load_by_langchain(file_url: str, mode=None, strategy=None):
@@ -118,117 +276,20 @@ def load_by_langchain(file_url: str, mode=None, strategy=None):
             poppler_path = config.get_bin_path("poppler")
             config.get_bin_path("tesseract")                # 이미지에서 단어 및 형태 추출
             loader_kwargs["poppler_path"] = poppler_path 
-            loader_kwargs["ocr_languages"] = config.get_bin_path("kor+eng")
-
+            loader_kwargs["ocr_languages"] = ["kor", "eng"]
+            loader_kwargs["infer_table_structure"] =True,   # 테이블 구조 분석 활성화
+            loader_kwargs["chunking_strategy"] = "by_title" # 테이블 타이블 활성화
+    
     loader = loader_class(file_url, **loader_kwargs)
-    raw_docs = loader.load()
+    docs = loader.load()
 
     # -----------------------------
-    # 설정
+    # 구조화 및 병합
     # -----------------------------
-    CONTEXT_CATEGORIES = {"Title", "NarrativeText", "List", "Caption"}
-    STRUCTURED_CATEGORIES = {"Table", "Figure", "Image"}
+    merged_docs = merge_docs_by_categories(docs)
 
-    llm = get_llm("gpt-4.1-mini")
-
-    merged_docs = []
-    index = 0
-    current_title = None
-    current_block = []
-    current_categories = []
-
-    # -----------------------------
-    # 내부 함수: 블록 flush
-    # -----------------------------
-    def flush_block():
-        nonlocal index, current_block, current_categories, current_title
-
-        if not current_block:
-            return
-
-        block_text = "\n".join(current_block)
-        final_category = "SemanticBlock"
-        inferred_title = current_title
-        if not inferred_title:
-            # title이 아예 없으면 블록 첫 문장을 title처럼 사용(너무 길면 자름)
-            inferred_title = (current_block[0][:80] if current_block else None)
-
-        if "UncategorizedText" in current_categories:
-            prompt = get_prompt("UNCATEGORIZED_CLASSIFY.txt")
-            response = clean_llm_json(
-                (prompt | llm).invoke({
-                    "title": inferred_title,
-                    "text": block_text[:4000]
-                })
-            )
-            try:
-                result = json.loads(response)
-                logger.info(f"[flush_block] LLM response {result}")
-                final_category = result.get("category", final_category)
-                block_text = result.get("cleaned_text", block_text)
-            except Exception as e:
-                logger.warning(f"[flush_block] LLM classify failed: {e}")
-
-        merged_docs.append(
-            Document(
-                page_content=block_text,
-                metadata={
-                    "source": file_url,
-                    "title": inferred_title,
-                    "category": final_category,
-                    "included_categories": list(set(current_categories)),
-                    "index": index,
-                }
-            )
-        )
-
-        index += 1
-        current_block.clear()
-        current_categories.clear()
-
-    # -----------------------------
-    # 메인 루프
-    # -----------------------------
-    for doc in raw_docs:
-        category = doc.metadata.get("category", "UncategorizedText")
-        text = doc.page_content.strip()
-
-        # 1️⃣ Title 등장 → 새 의미 블록 시작
-        if category == "Title":
-            flush_block()
-            current_title = text
-            current_block.append(text)
-            current_categories.append("Title")
-            continue
-
-        # 2️⃣ 구조화 데이터는 단독 문서
-        if category in STRUCTURED_CATEGORIES:
-            flush_block()
-            merged_docs.append(
-                Document(
-                    page_content=text,
-                    metadata={
-                        "source": file_url,
-                        "title": current_title,
-                        "category": category,
-                        "index": index,
-                    }
-                )
-            )
-            index += 1
-            continue
-
-        # 3️⃣ 일반 / Uncategorized → 현재 블록에 포함
-        # Title이 아직 없는데 문맥성 카테고리면 fallback title로 사용
-        if current_title is None and category in CONTEXT_CATEGORIES:
-            current_title = text  # fallback title
-        current_block.append(text)
-        current_categories.append(category)
-
-    # 마지막 블록 처리
-    flush_block()
-
-    logger.success(f"Done load_by_langchain : total_docs={len(merged_docs)}")
+    logger.debug(f"return load_by_langchain content[:3]={merged_docs[:3]}")
+    logger.info(f"Done load_by_langchain : len = {len(merged_docs)}")
     return merged_docs
 
 

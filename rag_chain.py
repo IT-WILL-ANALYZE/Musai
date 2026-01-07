@@ -4,7 +4,7 @@ import embedders.langchain_chroma_embed as chroma_embed
 from etl.langchain_loaders import load_by_langchain, get_ext_from_filename
 from etl.unstructured_loaders import load_by_unstructured
 from etl.langchain_stores import store_knowledgebase
-from chunkers.langchain_chunkers import chunk_structured_by_llm, chunk_data
+from chunkers.langchain_chunkers import chunk_data
 from prompts.load_prompt import get_prompt
 from llm.models import get_llm
 from langchain_core.output_parsers import StrOutputParser
@@ -23,11 +23,9 @@ def get_chunked_docs(file_url, file_structured: dict):
             mode=file_structured["mode"],
             strategy=file_structured["strategy"]
         )
-        logger.debug(f"load_by_langchain [docs] : {docs}")
-        
+
         # 2. chunk
         chunked_docs = chunk_data(docs, get_ext_from_filename(file_url))
-        logger.debug(f"chunk_data [docs] : {chunked_docs}")
         
         logger.success(f"Done get_chunked_docs : {len(chunked_docs)}")
         return chunked_docs
