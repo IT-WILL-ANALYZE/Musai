@@ -1,5 +1,8 @@
 from loguru import logger
 import config.setting as config
+import base64
+import os
+import pymupdf4llm
 from bs4 import BeautifulSoup
 from etl.langchain_parsers import clean_llm_json
 from langchain_core.documents import Document
@@ -28,41 +31,49 @@ VALID_LOADERS_SETTINGS = {
         "LOADER": UnstructuredMarkdownLoader,
         "MODES": {"elements", "single", "paged"},
         "STRATEGIES": set(),   # strategy 의미 없음
+        "CONVERTER" : set(),
     },
     ".markdown": {
         "LOADER": UnstructuredMarkdownLoader,
         "MODES": {"elements", "single", "paged"},
         "STRATEGIES": set(),
+        "CONVERTER" : set(),
     },
     ".txt": {
         "LOADER": UTF8TextLoader,
         "MODES": set(),
         "STRATEGIES": set(),
+        "CONVERTER" : "text_to_md",
     },
     ".pdf": {
         "LOADER": UnstructuredPDFLoader,
         "MODES": {"elements", "single", "paged"},
-        "STRATEGIES": {"fast", "hi_res"}, #ocr_only, auto
+        "STRATEGIES": {"fast"}, # except hi_res
+        "CONVERTER" : "pdf_to_md",
     },
     ".docx": {
         "LOADER": UnstructuredWordDocumentLoader,
         "MODES": {"elements", "single"},
         "STRATEGIES": set(),
+        "CONVERTER" : "text_to_md",
     },
     ".csv": {
         "LOADER": CSVLoader,
         "MODES": set(),        # loader가 mode 자체를 안 씀
         "STRATEGIES": set(),
+        "CONVERTER" : "table_to_md",
     },
     ".xlsx": {
         "LOADER": UnstructuredExcelLoader,
         "MODES": {"elements"},
         "STRATEGIES": set(),
+        "CONVERTER" : "table_to_md",
     },
     ".xls": {
         "LOADER": UnstructuredExcelLoader,
         "MODES": {"elements"},
         "STRATEGIES": set(),
+        "CONVERTER" : "table_to_md",
     },
 }
 
@@ -99,160 +110,93 @@ def normalize_loader_options(ext: str, mode=None, strategy=None):
 
 
 # ----------------------------------------------------
-# HTML → Markdown 변환
+# 확장자별 마크다운 변환 핵심 로직
 # ----------------------------------------------------
-def html_table_to_markdown(html: str) -> str:
+def _convert_to_markdown(docs, file_url, converter_type):
+    """
+    이미지 분석 후 메모리/디스크 최적화를 수행하며, 
+    추출된 마크다운을 page_content에 직접 반영합니다.
+    """
+    logger.info(f"Converting docs using strategy: {converter_type}")
     
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        table = soup.find("table")
-        if not table:
-            return ""
-
-        rows = []
-        for tr in table.find_all("tr"):
-            cells = tr.find_all(["th", "td"])
-            row = [cell.get_text(strip=True) for cell in cells]
-            if row:
-                rows.append(row)
-
-        if len(rows) < 2:
-            return ""
-
-        header = rows[0]
-        body = rows[1:]
-
-        md = []
-        md.append("| " + " | ".join(header) + " |")
-        md.append("| " + " | ".join(["---"] * len(header)) + " |")
-
-        for row in body:
-            md.append("| " + " | ".join(row) + " |")
-
-        return "\n".join(md)
-
-    except Exception as e:
-        logger.warning(f"[html_table_to_markdown] failed: {e}")
-        return ""
+    structured_docs = []
     
-    
-def merge_docs_by_categories(docs: List[Document]) -> List[Document]:
-    CONTINUE_CATEGORIES = {"TableChunk", "UncategorizedText"}
-    merged_docs: List[Document] = []
+    # 1. PyMuPDF4LLM을 사용하여 전체 텍스트를 마크다운으로 변환
+    # (full_md_context를 메타데이터에 넣지 않고 직접 활용)
+    full_markdown_text = ""
+    if converter_type == "pdf_to_md":
+        try:
+            full_markdown_text = pymupdf4llm.to_markdown(file_url)
+        except Exception as e:
+            logger.error(f"PyMuPDF4LLM 변환 실패: {e}")
 
-    buffer: List[Document] = []
-    buffer_category = None
-    index = 0
+    # 2. LLM 및 프롬프트 준비
+    llm = get_llm("gpt-4.1-mini")
+    detect_structures_prompt = get_prompt("detect_structures.txt")
+    detect_chain = detect_structures_prompt | llm
 
-    def flush_buffer():
-        nonlocal index, buffer, buffer_category, merged_docs
-
-        if not buffer:
-            return
-
-        # -----------------------
-        # TableChunk → Table 병합
-        # -----------------------
-        if buffer_category in ("TableChunk", "Table"):
-            raw_text = "\n".join(doc.page_content for doc in buffer)
-
-            html = buffer[0].metadata.get("text_as_html", "")
-            markdown_table = html_table_to_markdown(html)
-
-            final_content = (
-                markdown_table if markdown_table else raw_text
-            )
-
-            # 불필요한 대용량 필드 제거
-            clean_metadata = {
-                k: v for k, v in buffer[0].metadata.items()
-                if k not in {"orig_elements", "text_as_html"}
-            }
-
-            merged_docs.append(
-                Document(
-                    page_content=final_content,
-                    metadata={
-                        **clean_metadata,
-                        "category": "Table",
-                        "merged_from": "TableChunk",
-                        "index": index,
-                        "table_format": "markdown" if markdown_table else "text",
-                    },
-                )
-            )
-            index += 1
-
-        # -----------------------
-        # UncategorizedText → LLM 분류
-        # -----------------------
-        elif buffer_category == "UncategorizedText":
-            
-            llm = get_llm("gpt-4.1-mini")
-            prompt = get_prompt("UNCATEGORIZED_CLASSIFY.txt")
-
-            block_text = "\n".join(doc.page_content for doc in buffer)[:4000]
-
-            try:
-                response = clean_llm_json(
-                    (prompt | llm).invoke({"text": block_text})
-                )
-                Categorized_json = json.loads(response)
-                logger.info(f"Uncategorized by LLM : {buffer_category} → {Categorized_json.get("cleaned_category", "UncategorizedText")} || buffer size : {len(buffer)}")
-
-                merged_docs.append(
-                    Document(
-                        page_content=Categorized_json.get("cleaned_text", block_text),
-                        metadata={
-                            **buffer[0].metadata,
-                            "category": Categorized_json.get("cleaned_category", "UncategorizedText"),
-                            "index": index,
-                            "classified_by": "llm",
-                        },
-                    )
-                )
-                index += 1
-
-            except Exception as e:
-                logger.warning(f"Uncategorized by LLM failed: {e}")
-
-                merged_docs.append(
-                    Document(
-                        page_content=block_text,
-                        metadata={
-                            **buffer[0].metadata,
-                            "category": "UncategorizedText",
-                            "index": index,
-                        },
-                    )
-                )
-                index += 1
-
-        buffer = []
-        buffer_category = None
-
-    # -----------------------
-    # Main loop
-    # -----------------------
+    # 3. 요소별 처리
     for doc in docs:
-        category = doc.metadata.get("category")
+        original_category = doc.metadata.get("category", "Text")
+        page_content = doc.page_content
+        
+        new_metadata = {
+            **doc.metadata,
+            "category": original_category,
+            "categorized_with_llm": None,
+        }
 
-        if category in CONTINUE_CATEGORIES:
-            if buffer_category in (None, category):
-                buffer.append(doc)
-                buffer_category = category
-            else:
-                flush_buffer()
-                buffer.append(doc)
-                buffer_category = category
-        else:
-            flush_buffer()
-            doc.metadata["index"] = index
-            merged_docs.append(doc)
-            index += 1
+        # --- 이미지/그림 요소인 경우에만 LLM 분석 수행 ---
+        is_image_element = original_category in ["Image", "Figure", "Graphic"]
+        
+        if converter_type == "pdf_to_md" and is_image_element:
+            image_path = doc.metadata.get("image_path")
+            
+            if image_path and os.path.exists(image_path):
+                base64_raw = None # 초기화
+                try:
+                    # [파일 -> Base64 생성]
+                    with open(image_path, "rb") as f:
+                        base64_raw = base64.b64encode(f.read()).decode("utf-8")
+                        formatted_base64 = f"data:image/png;base64,{base64_raw}"
 
-    flush_buffer()
-    return merged_docs
+                    # [LLM 분석 작업 진행]
+                    logger.info(f"LLM 이미지 분석 중... (Page: {doc.metadata.get('page_number')})")
+                    raw_response = detect_chain.invoke({"image": formatted_base64})
+                    detected_data = clean_llm_json(raw_response)
+                    
+                    if isinstance(detected_data, dict):
+                        # 분석된 내용을 page_content에 삽입
+                        page_content = detected_data.get("content", page_content)
+                        new_metadata["categorized_with_llm"] = detected_data.get("category")
+                
+                except Exception as e:
+                    logger.error(f"이미지 분석 중 오류 발생: {e}")
+                    new_metadata["error"] = str(e)
+                
+                finally:
+                    # [메모리 최적화] base64 변수 초기화
+                    base64_raw = None
+                    # [정상 종료/에러 공통] 임시 이미지 파일 즉시 삭제
+                    if os.path.exists(image_path):
+                        os.remove(image_path)
+                        logger.debug(f"임시 이미지 삭제 완료: {image_path}")
+
+        # 가공된 Document 객체 생성
+        structured_docs.append(Document(
+            page_content=page_content,
+            metadata=new_metadata
+        ))
+
+    if full_markdown_text:
+        md_doc = Document(
+            page_content=full_markdown_text,
+            metadata={"category": "Full_Markdown", "source": file_url}
+        )
+        # 리스트 맨 앞에 삽입하여 검색 시 전체 맥락이 먼저 고려되도록 함
+        structured_docs.insert(0, md_doc)
+    
+    return structured_docs
 
 # ----------------------------------------------------
 # 문서 로드
@@ -263,6 +207,7 @@ def load_by_langchain(file_url: str, mode=None, strategy=None):
 
     cfg = VALID_LOADERS_SETTINGS[ext]
     loader_class = cfg["LOADER"]
+    converter_type = cfg["CONVERTER"]
 
     mode, strategy = normalize_loader_options(ext, mode, strategy)
     logger.info(f"Loader options → ext={ext}, mode={mode}, strategy={strategy}")
@@ -272,26 +217,35 @@ def load_by_langchain(file_url: str, mode=None, strategy=None):
         loader_kwargs["mode"] = mode
     if strategy:
         loader_kwargs["strategy"] = strategy
-        if strategy == "hi_res":
-            poppler_path = config.get_bin_path("poppler")
-            config.get_bin_path("tesseract")                # 이미지에서 단어 및 형태 추출
-            loader_kwargs["poppler_path"] = poppler_path 
-            loader_kwargs["ocr_languages"] = ["kor", "eng"]
-            loader_kwargs["infer_table_structure"] =True,   # 테이블 구조 분석 활성화
-            loader_kwargs["chunking_strategy"] = "by_title" # 테이블 타이블 활성화
     
     loader = loader_class(file_url, **loader_kwargs)
     docs = loader.load()
-
+    
     # -----------------------------
     # 구조화 및 병합
     # -----------------------------
-    merged_docs = merge_docs_by_categories(docs)
+    converted_docs = _convert_to_markdown(docs, file_url, converter_type)
 
-    logger.debug(f"return load_by_langchain content[:3]={merged_docs[:3]}")
-    logger.info(f"Done load_by_langchain : len = {len(merged_docs)}")
-    return merged_docs
+    logger.info(f"Done load_by_langchain : len = {len(converted_docs)}")
+    return converted_docs
 
+
+'''
+참고 )langchain을 통한 OCR : poppler - ocr //1 tesseract - image read
+loader_kwargs = {}
+loader_kwargs["mode"] = mode
+loader_kwargs["strategy"] = strategy
+if strategy == "hi_res":
+    poppler_path = config.get_bin_path("poppler")
+    config.get_bin_path("tesseract")                # 이미지에서 단어 및 형태 추출
+    loader_kwargs["poppler_path"] = poppler_path 
+    loader_kwargs["ocr_languages"] = ["kor", "eng"]
+    loader_kwargs["infer_table_structure"] =True,   # 테이블 구조 분석 활성화
+    loader_kwargs["chunking_strategy"] = "by_title" # 테이블 타이블 활성화
+
+loader = loader_class(file_url, **loader_kwargs)
+docs = loader.load()
+'''
 
 
 
