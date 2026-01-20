@@ -1,251 +1,181 @@
-from loguru import logger
-import config.setting as config
-import base64
 import os
+import base64
+import fitz  # PyMuPDF
 import pymupdf4llm
-from bs4 import BeautifulSoup
-from etl.langchain_parsers import clean_llm_json
-from langchain_core.documents import Document
+from loguru import logger
 from typing import List
-import json
 from prompts.load_prompt import get_prompt
 from llm.models import get_llm
+from langchain_core.documents import Document
 from langchain_community.document_loaders import (
     UnstructuredMarkdownLoader,
-    UnstructuredPDFLoader,
     UnstructuredWordDocumentLoader,
     TextLoader,
     CSVLoader,
     UnstructuredExcelLoader,
 )
-
+from etl.langchain_parsers import clean_llm_json
 
 class UTF8TextLoader(TextLoader):
     def __init__(self, file_path):
         super().__init__(file_path, encoding="utf-8")
 
 
-# --- Loader 매핑 ---
-VALID_LOADERS_SETTINGS = {
-    ".md": {
-        "LOADER": UnstructuredMarkdownLoader,
-        "MODES": {"elements", "single", "paged"},
-        "STRATEGIES": set(),   # strategy 의미 없음
-        "CONVERTER" : set(),
-    },
-    ".markdown": {
-        "LOADER": UnstructuredMarkdownLoader,
-        "MODES": {"elements", "single", "paged"},
-        "STRATEGIES": set(),
-        "CONVERTER" : set(),
-    },
-    ".txt": {
-        "LOADER": UTF8TextLoader,
-        "MODES": set(),
-        "STRATEGIES": set(),
-        "CONVERTER" : "text_to_md",
-    },
-    ".pdf": {
-        "LOADER": UnstructuredPDFLoader,
-        "MODES": {"elements", "single", "paged"},
-        "STRATEGIES": {"fast"}, # except hi_res
-        "CONVERTER" : "pdf_to_md",
-    },
-    ".docx": {
-        "LOADER": UnstructuredWordDocumentLoader,
-        "MODES": {"elements", "single"},
-        "STRATEGIES": set(),
-        "CONVERTER" : "text_to_md",
-    },
-    ".csv": {
-        "LOADER": CSVLoader,
-        "MODES": set(),        # loader가 mode 자체를 안 씀
-        "STRATEGIES": set(),
-        "CONVERTER" : "table_to_md",
-    },
-    ".xlsx": {
-        "LOADER": UnstructuredExcelLoader,
-        "MODES": {"elements"},
-        "STRATEGIES": set(),
-        "CONVERTER" : "table_to_md",
-    },
-    ".xls": {
-        "LOADER": UnstructuredExcelLoader,
-        "MODES": {"elements"},
-        "STRATEGIES": set(),
-        "CONVERTER" : "table_to_md",
-    },
-}
-
-
-# ----------------------------------------------------
-# 확장자 검사
-# ----------------------------------------------------
 def get_ext_from_filename(file_url: str):
-    ext = "." + file_url.lower().split(".")[-1]
+    ext = os.path.splitext(file_url)[1].lower()
     return ext
 
 
 # ----------------------------------------------------
-# 옵션 정규화
+# 메인 로드 함수
 # ----------------------------------------------------
-def normalize_loader_options(ext: str, mode=None, strategy=None):
-    cfg = VALID_LOADERS_SETTINGS[ext]
 
-    # --- mode ---
-    valid_modes = cfg["MODES"]
-    if valid_modes:
-        mode = mode if mode in valid_modes else next(iter(valid_modes))
-    else:
-        mode = None
-
-    # --- strategy ---
-    valid_strategies = cfg["STRATEGIES"]
-    if valid_strategies:
-        strategy = strategy if strategy in valid_strategies else "fast"
-    else:
-        strategy = None
-
-    return mode, strategy
-
-
-# ----------------------------------------------------
-# 확장자별 마크다운 변환 핵심 로직
-# ----------------------------------------------------
-def _convert_to_markdown(docs, file_url, converter_type):
-    """
-    이미지 분석 후 메모리/디스크 최적화를 수행하며, 
-    추출된 마크다운을 page_content에 직접 반영합니다.
-    """
-    logger.info(f"Converting docs using strategy: {converter_type}")
-    
-    structured_docs = []
-    
-    # 1. PyMuPDF4LLM을 사용하여 전체 텍스트를 마크다운으로 변환
-    # (full_md_context를 메타데이터에 넣지 않고 직접 활용)
-    full_markdown_text = ""
-    if converter_type == "pdf_to_md":
-        try:
-            full_markdown_text = pymupdf4llm.to_markdown(file_url)
-        except Exception as e:
-            logger.error(f"PyMuPDF4LLM 변환 실패: {e}")
-
-    # 2. LLM 및 프롬프트 준비
-    llm = get_llm("gpt-4.1-mini")
-    detect_structures_prompt = get_prompt("detect_structures.txt")
-    detect_chain = detect_structures_prompt | llm
-
-    # 3. 요소별 처리
-    for doc in docs:
-        original_category = doc.metadata.get("category", "Text")
-        page_content = doc.page_content
-        
-        new_metadata = {
-            **doc.metadata,
-            "category": original_category,
-            "categorized_with_llm": None,
-        }
-
-        # --- 이미지/그림 요소인 경우에만 LLM 분석 수행 ---
-        is_image_element = original_category in ["Image", "Figure", "Graphic"]
-        
-        if converter_type == "pdf_to_md" and is_image_element:
-            image_path = doc.metadata.get("image_path")
-            
-            if image_path and os.path.exists(image_path):
-                base64_raw = None # 초기화
-                try:
-                    # [파일 -> Base64 생성]
-                    with open(image_path, "rb") as f:
-                        base64_raw = base64.b64encode(f.read()).decode("utf-8")
-                        formatted_base64 = f"data:image/png;base64,{base64_raw}"
-
-                    # [LLM 분석 작업 진행]
-                    logger.info(f"LLM 이미지 분석 중... (Page: {doc.metadata.get('page_number')})")
-                    raw_response = detect_chain.invoke({"image": formatted_base64})
-                    detected_data = clean_llm_json(raw_response)
-                    
-                    if isinstance(detected_data, dict):
-                        # 분석된 내용을 page_content에 삽입
-                        page_content = detected_data.get("content", page_content)
-                        new_metadata["categorized_with_llm"] = detected_data.get("category")
-                
-                except Exception as e:
-                    logger.error(f"이미지 분석 중 오류 발생: {e}")
-                    new_metadata["error"] = str(e)
-                
-                finally:
-                    # [메모리 최적화] base64 변수 초기화
-                    base64_raw = None
-                    # [정상 종료/에러 공통] 임시 이미지 파일 즉시 삭제
-                    if os.path.exists(image_path):
-                        os.remove(image_path)
-                        logger.debug(f"임시 이미지 삭제 완료: {image_path}")
-
-        # 가공된 Document 객체 생성
-        structured_docs.append(Document(
-            page_content=page_content,
-            metadata=new_metadata
-        ))
-
-    if full_markdown_text:
-        md_doc = Document(
-            page_content=full_markdown_text,
-            metadata={"category": "Full_Markdown", "source": file_url}
-        )
-        # 리스트 맨 앞에 삽입하여 검색 시 전체 맥락이 먼저 고려되도록 함
-        structured_docs.insert(0, md_doc)
-    
-    return structured_docs
-
-# ----------------------------------------------------
-# 문서 로드
-# ----------------------------------------------------
-def load_by_langchain(file_url: str, mode=None, strategy=None):
-    ext = get_ext_from_filename(file_url)
+def load_by_langchain(file_url: str) -> List[Document]:
     logger.info(f"Start load_by_langchain : {file_url}")
-
-    cfg = VALID_LOADERS_SETTINGS[ext]
-    loader_class = cfg["LOADER"]
-    converter_type = cfg["CONVERTER"]
-
-    mode, strategy = normalize_loader_options(ext, mode, strategy)
-    logger.info(f"Loader options → ext={ext}, mode={mode}, strategy={strategy}")
-
-    loader_kwargs = {}
-    if mode:
-        loader_kwargs["mode"] = mode
-    if strategy:
-        loader_kwargs["strategy"] = strategy
     
-    loader = loader_class(file_url, **loader_kwargs)
-    docs = loader.load()
+    # 확장자 추출
+    ext = os.path.splitext(file_url)[1].lower().replace('.', '')
     
-    # -----------------------------
-    # 구조화 및 병합
-    # -----------------------------
-    converted_docs = _convert_to_markdown(docs, file_url, converter_type)
-
-    logger.info(f"Done load_by_langchain : len = {len(converted_docs)}")
-    return converted_docs
-
-
-'''
-참고 )langchain을 통한 OCR : poppler - ocr //1 tesseract - image read
-loader_kwargs = {}
-loader_kwargs["mode"] = mode
-loader_kwargs["strategy"] = strategy
-if strategy == "hi_res":
-    poppler_path = config.get_bin_path("poppler")
-    config.get_bin_path("tesseract")                # 이미지에서 단어 및 형태 추출
-    loader_kwargs["poppler_path"] = poppler_path 
-    loader_kwargs["ocr_languages"] = ["kor", "eng"]
-    loader_kwargs["infer_table_structure"] =True,   # 테이블 구조 분석 활성화
-    loader_kwargs["chunking_strategy"] = "by_title" # 테이블 타이블 활성화
-
-loader = loader_class(file_url, **loader_kwargs)
-docs = loader.load()
-'''
+    # 이미지 통합 처리 (.jpg, .png, .jpeg)
+    if ext in ['jpg', 'jpeg', 'png']:
+        return extract_image(file_url)
+    
+    # 동적 함수 매핑 (extract_{ext})
+    method_name = f"extract_{ext}"
+    if globals().get(method_name):
+        return globals()[method_name](file_url)
+    else:
+        logger.error(f"Unsupported extension: {ext}")
+        return []
 
 
+# ----------------------------------------------------
+# load 후 markdown으로 파일 형식 통일
+# ----------------------------------------------------
 
+def _convert_to_markdown(docs: List[Document], category: str, file_url: str) -> List[Document]:
+    """
+    다양한 형태의 Document 리스트를 하나의 마크다운 Document로 병합합니다.
+    """
+    logger.info(f"Converting {category} elements to unified markdown.")
+    
+    # 문서 시작 부분에 출처 명시 (Markdown H1)
+    md_contents = []
+    
+    for doc in docs:
+        content = doc.page_content.strip()
+        if not content:
+            continue
+            
+        # Unstructured의 category 메타데이터를 활용해 마크다운 구조화
+        element_type = doc.metadata.get("category", "")
+        
+        if element_type == "Title":
+            md_contents.append(f"## {content}")
+        elif element_type in ["Table", "DataTable"]:
+            # 표의 경우 앞뒤로 줄바꿈을 주어 마크다운 구조 유지
+            md_contents.append(f"\n{content}\n")
+        elif element_type == "ListItem":
+            md_contents.append(f"* {content}")
+        else:
+            md_contents.append(content)
+
+    full_md = "\n\n".join(md_contents)
+    return [Document(page_content=full_md, metadata={"source": file_url, "category": category})]
+
+
+# ----------------------------------------------------
+# 확장자별 추출 함수들
+# ----------------------------------------------------
+
+def extract_pdf(file_url: str) -> List[Document]:
+    """
+    1. pymupdf4llm을 사용하여 텍스트 및 표 추출
+    2. fitz를 사용하여 이미지 추출 및 LLM 분석
+    3. 순서에 맞게 병합
+    """
+    logger.info(f"Extracting PDF via PyMuPDF4LLM and fitz: {file_url}")
+    
+    # 1. PyMuPDF4LLM으로 마크다운 기반 텍스트/표 추출
+    md_text = pymupdf4llm.to_markdown(file_url)
+    
+    # 2. 이미지 추출 및 LLM 분석 (Base64)
+    doc = fitz.open(file_url)
+    llm_image_descriptions = []
+    
+    for page_index in range(len(doc)):
+        page = doc[page_index]
+        image_list = page.get_images(full=True)
+        
+        for img_index, img in enumerate(image_list):
+            xref = img[0]
+            base_image = doc.extract_image(xref)
+            image_bytes = base_image["image"]
+            
+            # Base64로 LLM 요청
+            description = _detect_structures_with_llm(image_bytes)
+            # 마크다운 인용구(>) 형식을 사용하여 이미지 설명임을 명시
+            llm_image_descriptions.append(f"\n\n> ### [Image Analysis (Page {page_index+1})]\n> {description}\n")
+
+    # 3. 텍스트와 이미지 분석 내용 병합
+    full_content = f"# Source: {os.path.basename(file_url)}\n\n" + md_text + "\n" + "\n".join(llm_image_descriptions)
+    
+    return [Document(page_content=full_content, metadata={"source": file_url, "category": "PDF"})]
+
+def extract_image(file_url: str) -> List[Document]:
+    """이미지 파일(jpg, png, jpeg) 통합 처리"""
+    logger.info(f"Extracting Image via LLM: {file_url}")
+    with open(file_url, "rb") as f:
+        image_bytes = f.read()
+    
+    description = _detect_structures_with_llm(image_bytes)
+    full_content = f"# Source Image: {os.path.basename(file_url)}\n\n## Analysis Result\n{description}"
+    return [Document(page_content=full_content, metadata={"source": file_url, "category": "Image"})]
+
+def extract_md(file_url: str) -> List[Document]:
+    # Markdown은 이미 형식이 있으므로 single로 가져와서 출처만 붙여줍니다.
+    loader = UnstructuredMarkdownLoader(file_url, mode="single")
+    return _convert_to_markdown(loader.load(), "Markdown", file_url)
+
+def extract_markdown(file_url: str) -> List[Document]:
+    return extract_md(file_url)
+
+def extract_docx(file_url: str) -> List[Document]:
+    loader = UnstructuredWordDocumentLoader(file_url, mode="elements", strategy="fast")
+    return _convert_to_markdown(loader.load(), "DOCX", file_url)
+
+def extract_xlsx(file_url: str) -> List[Document]:
+    loader = UnstructuredExcelLoader(file_url, mode="elements")
+    return _convert_to_markdown(loader.load(), "XLSX", file_url)
+
+def extract_xls(file_url: str) -> List[Document]:
+    return extract_xlsx(file_url)
+
+def extract_csv(file_url: str) -> List[Document]:
+    # CSVLoader는 기본적으로 Document 리스트를 반환하므로 컨버터 적용 가능
+    loader = CSVLoader(file_url)
+    return _convert_to_markdown(loader.load(), "CSV", file_url)
+
+def extract_txt(file_url: str) -> List[Document]:
+    loader = UTF8TextLoader(file_url)
+    return _convert_to_markdown(loader.load(), "TXT", file_url)
+
+
+# ----------------------------------------------------
+# 헬퍼 함수
+# ----------------------------------------------------
+
+def _detect_structures_with_llm(image_bytes: bytes) -> str:
+    """이미지 바이너리를 받아 Base64로 LLM에 요청 (저장 안함)"""
+    try:
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
+        llm = get_llm("gpt-4o-mini")
+        detect_structures_prompt = get_prompt("detect_structures.txt")
+        detect_chain = detect_structures_prompt | llm
+        
+        response = detect_chain.invoke({"image": base64_image})
+        return clean_llm_json(response.content)
+    
+    except Exception as e:
+        logger.error(f"LLM Image analysis failed: {e}")
+        return "[Image analysis error]"

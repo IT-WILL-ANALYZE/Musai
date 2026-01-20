@@ -2,7 +2,6 @@ import streamlit as st
 import copy
 import uuid
 import os as os
-import etl.langchain_loaders as loaders
 import rag_chain  as rag_chain
 from langchain_core.documents import Document
 
@@ -23,8 +22,6 @@ if "uploader_version" not in st.session_state:
     st.session_state.uploader_version = 0
 if "uploaded_filename" not in st.session_state:
     st.session_state.uploaded_filename = ""
-if "file_structured" not in st.session_state:
-    st.session_state.file_structured = {"mode": None, "strategy": None}
 if "chunked_docs" not in st.session_state:
     st.session_state.chunked_docs = []
 if "original_chunked_docs" not in st.session_state:
@@ -49,9 +46,7 @@ def create_vectordb(file_url):
 def admin_chunk_rag(file_url):
     if st.session_state.admin_verified and st.session_state.test_mode:
         with st.spinner("청킹 진행 중..."):
-            chunks = rag_chain.get_chunked_docs(
-                file_url, st.session_state.file_structured
-            )
+            chunks = rag_chain.get_chunked_docs(file_url)
 
         st.session_state.admin_step_up = 1      # 임베딩 버튼 생성
         st.session_state.chunked_docs = chunks  # chunk 세션 관리
@@ -234,57 +229,10 @@ def show_upload_file():
         st.session_state.uploaded_filename = uploaded.name
         st.session_state.test_mode = False
 
-        ext = loaders.get_ext_from_filename(uploaded.name)
-        cfg = loaders.VALID_LOADERS_SETTINGS.get(ext)
-
         st.success(f"파일 선택됨: {uploaded.name}")
 
         if os.path.exists(save_path):
             st.error(f"⚠ '{uploaded.name}' 파일은 이미 존재합니다. 테스트 진행시 덮어씌워집니다.")
-
-        # -------------------------
-        # mode 선택
-        # -------------------------
-        selected_mode = None
-        if cfg and cfg["MODES"]:
-            MODE_ORDER = ["elements", "single", "paged"]
-            mode_options = [m for m in MODE_ORDER if m in cfg["MODES"]]
-
-            mode_key = f"structured_mode_{uploaded.name}"
-            selected_mode = st.radio(
-                "구조화(mode)를 선택해주세요",
-                mode_options,
-                captions=[
-                    "단락 별로 구분" if m == "elements"
-                    else "구분하지 않음" if m == "single"
-                    else "페이지 별로 구분"
-                    for m in mode_options
-                ],
-                key=mode_key,
-                horizontal=True,
-            )
-
-        # -------------------------
-        # strategy 선택
-        # -------------------------
-        selected_strategy = None
-        if cfg and cfg["STRATEGIES"]:
-            STRATEGY_ORDER = ["fast", "hi_res", "ocr_only", "auto"]
-            strategy_options = [s for s in STRATEGY_ORDER if s in cfg["STRATEGIES"]]
-
-            strategy_key = f"structured_strategy_{uploaded.name}"
-            selected_strategy = st.radio(
-                "처리 전략(strategy)을 선택해주세요",
-                strategy_options,
-                captions=[
-                    "일반" if s == "fast"
-                    else "PDF(표, 레이아웃 중요한 경우)" if s == "hi_res"
-                    else "OCR 전용"
-                    for s in strategy_options
-                ],
-                key=strategy_key,
-                horizontal=True,
-            )
 
         # -------------------------
         # 테스트 버튼
@@ -293,12 +241,6 @@ def show_upload_file():
             st.session_state.admin_step_up = 0
             st.session_state.test_mode = True
             st.session_state.uploader_version += 1
-
-            # 최종 스냅샷 저장
-            st.session_state.file_structured.update({
-                "mode": selected_mode,
-                "strategy": selected_strategy,
-            })
 
             os.makedirs(save_dir, exist_ok=True)
             with open(save_path, "wb") as f:

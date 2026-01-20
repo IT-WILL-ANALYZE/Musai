@@ -1,31 +1,26 @@
-from loguru import logger
 import config.setting
+from loguru import logger
 import embedders.langchain_chroma_embed as chroma_embed
-from etl.langchain_loaders import load_by_langchain, get_ext_from_filename
-from etl.unstructured_loaders import load_by_unstructured
+from etl.langchain_loaders import load_by_langchain
 from etl.langchain_stores import store_knowledgebase
-from chunkers.langchain_chunkers import chunk_data
+from chunkers.langchain_chunkers import chunk_format_md
 from prompts.load_prompt import get_prompt
 from llm.models import get_llm
 from langchain_core.output_parsers import StrOutputParser
 
 
 # 청크
-def get_chunked_docs(file_url, file_structured: dict):
+def get_chunked_docs(file_url):
     try:
         logger.info(
-            f"Start get_chunked_docs : {file_url, file_structured}"
+            f"Start get_chunked_docs : {file_url}"
         )
         
         # 1. load
-        docs = load_by_langchain(
-            file_url,
-            mode=file_structured["mode"],
-            strategy=file_structured["strategy"]
-        )
+        docs = load_by_langchain(file_url)
 
         # 2. chunk
-        chunked_docs = chunk_data(docs, get_ext_from_filename(file_url))
+        chunked_docs = chunk_format_md(docs)
         
         logger.success(f"Done get_chunked_docs : {len(chunked_docs)}")
         return chunked_docs

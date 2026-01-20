@@ -1,5 +1,6 @@
 import config.setting
 import json
+import re
 from loguru import logger
 from langchain_core.documents import Document
 from llm.models import get_llm
@@ -10,6 +11,12 @@ from langchain_text_splitters import (
     CharacterTextSplitter,
     MarkdownTextSplitter
 )
+
+
+
+# ----------------------------------------------------
+# 메인 청크(현재 사용 X)
+# ----------------------------------------------------
 
 # 확장자별 Splitter 매핑
 SPLITTERS = {
@@ -61,8 +68,75 @@ def chunk_data(docs: list[Document], ext: str):
     return results
 
 
+# ----------------------------------------------------
+# 특정 확장자만 chunk(MD 확장자만 구현)
+# ----------------------------------------------------
 
-# 추후 사용
+def chunk_format_md(docs: list[Document]):
+    """
+    제목(Header)과 그 아래 붙은 표(Table) 및 주석이 분리되지 않도록 
+    섹션 단위로 맥락을 유지하며 청킹합니다.
+    """
+    if not docs:
+        return []
+
+    logger.info(f"Start Context-Aware Chunking : documents={len(docs)}")
+
+    # 텍스트가 너무 길 때만 자르는 Splitter (임계값 상향)
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1200, 
+        chunk_overlap=200,
+        separators=["\n\n\n", "\n\n", "\n"]
+    )
+
+    results = []
+
+    for doc in docs:
+        content = doc.page_content
+        
+        # 1. 헤더(#, ##, ###)를 기준으로 섹션을 나눔 
+        # (헤더를 유실하지 않기 위해 전방탐색 패턴 사용)
+        section_pattern = r'\n(?=#+ )'
+        sections = re.split(section_pattern, content)
+        
+        for section in sections:
+            section = section.strip()
+            if not section:
+                continue
+            
+            # 2. 섹션 내에 표가 있는지 확인 (마크다운 표 패턴)
+            table_pattern = r'\|[^\n]+\|\n\|[\s\-\|:]+\|\n(?:\|[^\n]+\|\n*)+'
+            has_table = re.search(table_pattern, section)
+            
+            # 3. 표가 포함된 섹션 처리
+            if has_table:
+                # 표가 포함된 경우, 제목과 표를 붙여서 하나의 청크로 유지
+                # 섹션 전체 길이가 시스템 제한(예: 2000자)을 넘지 않으면 통째로 저장
+                if len(section) < 1800:
+                    logger.info(f"Table with Header preserved. Length: {len(section)}")
+                    results.append(Document(
+                        page_content=section,
+                        metadata={**doc.metadata, "category": "Table"}
+                    ))
+                    continue
+
+            # 4. 표가 없거나, 섹션이 너무 길어서 LLM 토큰 제한을 넘길 위험이 있는 경우
+            # RecursiveCharacterTextSplitter를 사용하여 의미 단위로 분할
+            chunks = text_splitter.split_text(section)
+            for chunk in chunks:
+                results.append(Document(
+                    page_content=chunk.strip(),
+                    metadata=doc.metadata
+                ))
+
+    logger.info(f"Done chunk_data : total_chunks={len(results)}")
+    return results
+
+
+# ----------------------------------------------------
+# 미구현
+# ----------------------------------------------------
+
 def chunk_structured_by_llm(chunked_docs):
     logger.info(f"Start chunk_structured_by_llm: chunked_docs={len(chunked_docs)}")
 
