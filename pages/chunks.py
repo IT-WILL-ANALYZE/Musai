@@ -180,38 +180,39 @@ if not json_files:
     st.warning("📁 knowledge-base 폴더에 JSON 파일이 없습니다.")
     st.stop()
 
-# 사이드바에 파일 목록 표시
-with st.sidebar:
-    st.header("📂 파일 목록")
-    
-    for idx, file in enumerate(json_files):
-        col1, col2 = st.columns([4, 1])
+# 사이드바에 파일 목록 표시(관리자 모드)
+if st.session_state.admin_verified:
+    with st.sidebar:
+        st.header("📂 파일 목록")
         
-        with col1:
-            if st.button(
-                file, 
-                key=f"select_file_{idx}_{file}",
-                use_container_width=True,
-                type="primary" if st.session_state.selected_file == file else "secondary"
-            ):
-                st.session_state.selected_file = file
-                st.session_state.knowledge_data = load_json_file(file)
-                st.rerun()
+        for idx, file in enumerate(json_files):
+            col1, col2 = st.columns([4, 1])
+            
+            with col1:
+                if st.button(
+                    file, 
+                    key=f"select_file_{idx}_{file}",
+                    use_container_width=True,
+                    type="primary" if st.session_state.selected_file == file else "secondary"
+                ):
+                    st.session_state.selected_file = file
+                    st.session_state.knowledge_data = load_json_file(file)
+                    st.rerun()
+            
+            with col2:
+                if st.button("🗑", key=f"delete_file_{idx}", help="파일 및 VectorDB 삭제"):
+                    with st.spinner(f"🗑 {file} 삭제 중..."):
+                        if delete_json_file(file):
+                            if st.session_state.selected_file == file:
+                                st.session_state.selected_file = None
+                                st.session_state.knowledge_data = None
+                            st.success(f"✅ {file} 삭제 완료! (JSON + VectorDB)")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {file} 삭제 실패!")
         
-        with col2:
-            if st.button("🗑", key=f"delete_file_{idx}", help="파일 및 VectorDB 삭제"):
-                with st.spinner(f"🗑 {file} 삭제 중..."):
-                    if delete_json_file(file):
-                        if st.session_state.selected_file == file:
-                            st.session_state.selected_file = None
-                            st.session_state.knowledge_data = None
-                        st.success(f"✅ {file} 삭제 완료! (JSON + VectorDB)")
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {file} 삭제 실패!")
-    
-    st.divider()
-    st.caption(f"총 {len(json_files)}개의 파일")
+        st.divider()
+        st.caption(f"총 {len(json_files)}개의 파일")
 
 
 # ------------------------------
