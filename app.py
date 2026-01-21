@@ -105,10 +105,10 @@ def render_chunk_manager():
 
     st.subheader("🧩 Chunk 관리자")
 
-    delete_target_id = None 
+    delete_target_idx = None
+    add_after_idx = None
 
-    chunk_no = 1
-    for doc in st.session_state.chunked_docs:
+    for idx, doc in enumerate(st.session_state.chunked_docs):
         chunk_id = doc.metadata.get("id")
 
         # 안전장치: id 없으면 생성
@@ -116,8 +116,7 @@ def render_chunk_manager():
             chunk_id = str(uuid.uuid4())
             doc.metadata["id"] = chunk_id
 
-        with st.expander(f"Chunk {chunk_no}", expanded=False):
-            chunk_no = chunk_no + 1
+        with st.expander(f"Chunk {idx + 1}", expanded=False):
             st.markdown(f"**관련 항목:** `{doc.metadata.get('title', 'N/A')}`")
             st.markdown(f"**카테고리:** `{doc.metadata.get('category', 'N/A')}`")
 
@@ -132,49 +131,81 @@ def render_chunk_manager():
             if edited_text != doc.page_content:
                 doc.page_content = edited_text
 
-            # 🗑 삭제 버튼
-            if st.button("🗑 삭제", key=f"delete_{chunk_id}"):
-                delete_target_id = chunk_id
+            # 버튼 영역
+            st.markdown("---")
+            btn_col1, btn_col2 = st.columns(2)
+            
+            with btn_col1:
+                if st.button("➕ 추가", key=f"add_{chunk_id}", type="secondary", use_container_width=True):
+                    add_after_idx = idx
+            
+            with btn_col2:
+                if st.button("🗑 삭제", key=f"delete_{chunk_id}", type="secondary", use_container_width=True):
+                    delete_target_idx = idx
 
     # -----------------------------
     # 삭제 처리 (루프 밖에서!)
     # -----------------------------
-    if delete_target_id:
-        st.session_state.chunked_docs = [
-            d for d in st.session_state.chunked_docs
-            if d.metadata.get("id") != delete_target_id
-        ]
+    if delete_target_idx is not None:
+        st.session_state.chunked_docs.pop(delete_target_idx)
+        st.success(f"✅ Chunk {delete_target_idx + 1} 삭제 완료!")
         st.rerun()
 
+    # -----------------------------
+    # 추가 처리
+    # -----------------------------
+    if add_after_idx is not None:
+        st.session_state.add_after_chunk_idx = add_after_idx
+        st.rerun()
 
     # -------------------------------------------------
-    # Chunk 추가 (항상 뒤에 append)
+    # Chunk 추가 폼 (특정 위치 다음에)
     # -------------------------------------------------
-    st.subheader("➕ Chunk 추가")
-    with st.form("add_chunk_form", clear_on_submit=True):
-        new_chunk_text = st.text_area(
-            "새 Chunk 내용",
-            height=150
-        )
-
-        submitted = st.form_submit_button("➕ Chunk 추가")
-
-        if submitted:
-            if new_chunk_text.strip():
-                st.session_state.chunked_docs.append(
-                    Document(
-                        page_content=new_chunk_text,
-                        metadata={
-                            "id": str(uuid.uuid4()),
-                            "source": "manual",
-                            "category": "Manual"
-                        }
-                    )
+    if "add_after_chunk_idx" in st.session_state:
+        add_idx = st.session_state.add_after_chunk_idx
+        
+        st.divider()
+        st.subheader(f"➕ Chunk {add_idx + 1} 다음에 추가")
+        
+        with st.form("add_chunk_at_index_form", clear_on_submit=True):
+            new_chunk_text = st.text_area(
+                "새 Chunk 내용",
+                height=150,
+                placeholder="여기에 새로운 chunk 내용을 입력하세요..."
+            )
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                new_title = st.text_input("관련 항목", value="Manual")
+            with col2:
+                new_category = st.text_input("카테고리", value="Manual")
+            
+            form_col1, form_col2 = st.columns(2)
+            with form_col1:
+                submitted = st.form_submit_button("➕ 추가", type="primary", use_container_width=True)
+            with form_col2:
+                cancelled = st.form_submit_button("❌ 취소", use_container_width=True)
+            
+            if submitted and new_chunk_text.strip():
+                new_doc = Document(
+                    page_content=new_chunk_text.strip(),
+                    metadata={
+                        "id": str(uuid.uuid4()),
+                        "source": "manual",
+                        "title": new_title,
+                        "category": new_category
+                    }
                 )
+                
+                # 지정된 위치 다음에 삽입
+                st.session_state.chunked_docs.insert(add_idx + 1, new_doc)
+                st.success(f"✅ Chunk {add_idx + 1} 다음에 추가 완료!")
+                del st.session_state.add_after_chunk_idx
                 st.rerun()
-            else:
-                st.warning("Chunk 내용이 비어 있습니다.")
-
+            
+            if cancelled:
+                del st.session_state.add_after_chunk_idx
+                st.rerun()
 
     # -------------------------------------------------
     # 원본 복구
@@ -235,9 +266,9 @@ def show_upload_file():
             st.error(f"⚠ '{uploaded.name}' 파일은 이미 존재합니다. 테스트 진행시 덮어씌워집니다.")
 
         # -------------------------
-        # 테스트 버튼
+        # 업로드 버튼
         # -------------------------
-        if st.button("테스트", key="btn_test", type="primary"):
+        if st.button("업로드", key="btn_upload", type="primary"):
             st.session_state.admin_step_up = 0
             st.session_state.test_mode = True
             st.session_state.uploader_version += 1
