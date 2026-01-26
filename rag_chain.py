@@ -17,12 +17,12 @@ def get_chunked_docs(file_url):
         )
         
         # 1. load
-        docs = load_by_langchain(file_url)
+        content_md = load_by_langchain(file_url)
 
         # 2. chunk
-        chunked_docs = chunk_format_md(docs)
+        chunked_docs = chunk_format_md(content_md)
         
-        logger.success(f"Done get_chunked_docs : {len(chunked_docs)}")
+        logger.success(f"Done get_chunked_docs : {len(chunked_docs)} chunks created")
         return chunked_docs
     except Exception as e:
         logger.exception(f"Failed get_chunked_docs : {e}")

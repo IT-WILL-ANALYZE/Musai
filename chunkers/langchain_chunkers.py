@@ -72,64 +72,36 @@ def chunk_data(docs: list[Document], ext: str):
 # 특정 확장자만 chunk(MD 확장자만 구현)
 # ----------------------------------------------------
 
-def chunk_format_md(docs: list[Document]):
-    """
-    제목(Header)과 그 아래 붙은 표(Table) 및 주석이 분리되지 않도록 
-    섹션 단위로 맥락을 유지하며 청킹합니다.
-    """
-    if not docs:
+def chunk_format_md(content_md: str):
+    logger.info(f"Start chunk_format_md : content_length={len(content_md)}")
+    
+    if not content_md:
         return []
 
-    logger.info(f"Start Context-Aware Chunking : documents={len(docs)}")
-
-    # 텍스트가 너무 길 때만 자르는 Splitter (임계값 상향)
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1200, 
-        chunk_overlap=200,
-        separators=["\n\n\n", "\n\n", "\n"]
+    # MarkdownTextSplitter 설정
+    text_splitter = MarkdownTextSplitter(
+        chunk_size=700,
+        chunk_overlap=50
     )
 
-    results = []
+    # Document 객체로 변환 (메타데이터 포함)
+    base_metadata = {
+        "source": "loaded_content",
+        "format": "markdown"
+    }
+    
+    # create_documents를 사용하여 Document 객체 리스트 반환
+    results = text_splitter.create_documents(
+        [content_md],
+        metadatas=[base_metadata]
+    )
+    
+    # 각 Document에 category 메타데이터 추가
+    for idx, doc in enumerate(results):
+        doc.metadata["category"] = "Text"
+        doc.metadata["chunk_index"] = idx + 1
 
-    for doc in docs:
-        content = doc.page_content
-        
-        # 1. 헤더(#, ##, ###)를 기준으로 섹션을 나눔 
-        # (헤더를 유실하지 않기 위해 전방탐색 패턴 사용)
-        section_pattern = r'\n(?=#+ )'
-        sections = re.split(section_pattern, content)
-        
-        for section in sections:
-            section = section.strip()
-            if not section:
-                continue
-            
-            # 2. 섹션 내에 표가 있는지 확인 (마크다운 표 패턴)
-            table_pattern = r'\|[^\n]+\|\n\|[\s\-\|:]+\|\n(?:\|[^\n]+\|\n*)+'
-            has_table = re.search(table_pattern, section)
-            
-            # 3. 표가 포함된 섹션 처리
-            if has_table:
-                # 표가 포함된 경우, 제목과 표를 붙여서 하나의 청크로 유지
-                # 섹션 전체 길이가 시스템 제한(예: 2000자)을 넘지 않으면 통째로 저장
-                if len(section) < 1800:
-                    logger.info(f"Table with Header preserved. Length: {len(section)}")
-                    results.append(Document(
-                        page_content=section,
-                        metadata={**doc.metadata, "category": "Table"}
-                    ))
-                    continue
-
-            # 4. 표가 없거나, 섹션이 너무 길어서 LLM 토큰 제한을 넘길 위험이 있는 경우
-            # RecursiveCharacterTextSplitter를 사용하여 의미 단위로 분할
-            chunks = text_splitter.split_text(section)
-            for chunk in chunks:
-                results.append(Document(
-                    page_content=chunk.strip(),
-                    metadata=doc.metadata
-                ))
-
-    logger.info(f"Done chunk_data : total_chunks={len(results)}")
+    logger.info(f"Done chunk_format_md : total_chunks={len(results)}")
     return results
 
 

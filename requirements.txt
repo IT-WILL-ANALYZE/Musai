@@ -454,7 +454,7 @@ pymupdf==1.26.7
     # via
     #   -r requirements.in
     #   pymupdf4llm
-pymupdf4llm==0.2.9
+pymupdf4llm==0.0.17
     # via -r requirements.in
 pyparsing==3.3.2
     # via matplotlib
