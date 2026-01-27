@@ -49,6 +49,7 @@ def load_by_langchain(file_url: str) -> str:
         text_content = globals()[method_name](file_url)
     
     logger.success(f"Done load_by_langchain")
+    
     return text_content
 
 
@@ -142,6 +143,7 @@ def extract_pdf(file_url: str) -> str:
         logger.error(f"Error in extract_pdf extraction: {e}")
         return ""
 
+
 def extract_image(file_url: str) -> str:
     """이미지 파일(jpg, png, jpeg) 통합 처리"""
     logger.info(f"Extracting Image via LLM: {file_url}")
@@ -163,29 +165,36 @@ def extract_image(file_url: str) -> str:
         logger.error(f"Error in extract_image: {e}")
         return ""
 
+
 def extract_md(file_url: str) -> str:
     # Markdown은 이미 형식이 있으므로 single로 가져와서 출처만 붙여줍니다.
     loader = UnstructuredMarkdownLoader(file_url, mode="single")
     return _convert_to_markdown(loader.load(), "Markdown", file_url)
 
+
 def extract_markdown(file_url: str) -> str:
     return extract_md(file_url)
+
 
 def extract_docx(file_url: str) -> str:
     loader = UnstructuredWordDocumentLoader(file_url, mode="elements", strategy="fast")
     return _convert_to_markdown(loader.load(), "DOCX", file_url)
 
+
 def extract_xlsx(file_url: str) -> str:
     loader = UnstructuredExcelLoader(file_url, mode="elements")
     return _convert_to_markdown(loader.load(), "XLSX", file_url)
 
+
 def extract_xls(file_url: str) -> str:
     return extract_xlsx(file_url)
+
 
 def extract_csv(file_url: str) -> str:
     # CSVLoader는 기본적으로 Document 리스트를 반환하므로 컨버터 적용 가능
     loader = CSVLoader(file_url)
     return _convert_to_markdown(loader.load(), "CSV", file_url)
+
 
 def extract_txt(file_url: str) -> str:
     loader = UTF8TextLoader(file_url)

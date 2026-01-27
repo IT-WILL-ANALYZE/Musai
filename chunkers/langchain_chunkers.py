@@ -1,4 +1,3 @@
-import config.setting
 import json
 import re
 from loguru import logger
@@ -9,7 +8,8 @@ from etl.langchain_parsers import clean_llm_json, parse_structured_json
 from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
     CharacterTextSplitter,
-    MarkdownTextSplitter
+    MarkdownTextSplitter,
+    MarkdownHeaderTextSplitter
 )
 
 
@@ -78,31 +78,89 @@ def chunk_format_md(content_md: str):
     if not content_md:
         return []
 
-    # MarkdownTextSplitter 설정
-    text_splitter = MarkdownTextSplitter(
+    # 헤더 기반으로 1차 분할
+    headers_to_split_on = [
+        ("#", "Header 1"),
+        ("##", "Header 2"),
+        ("###", "Header 3"),
+        ("####", "Header 4"),
+    ]
+    
+    markdown_splitter = MarkdownHeaderTextSplitter(
+        headers_to_split_on=headers_to_split_on,
+        strip_headers=False
+    )
+    
+    # 헤더 기반 분할 수행
+    header_splits = markdown_splitter.split_text(content_md)
+    
+    # 2차 분할: 크기가 큰 청크를 더 작게 나누되, 표는 보호
+    text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=700,
-        chunk_overlap=50
-    )
-
-    # Document 객체로 변환 (메타데이터 포함)
-    base_metadata = {
-        "source": "loaded_content",
-        "format": "markdown"
-    }
-    
-    # create_documents를 사용하여 Document 객체 리스트 반환
-    results = text_splitter.create_documents(
-        [content_md],
-        metadatas=[base_metadata]
+        chunk_overlap=50,
+        separators=["\n\n", "\n", " ", ""]
     )
     
-    # 각 Document에 category 메타데이터 추가
+    results = []
+    
+    for doc in header_splits:
+        content = doc.page_content
+        
+        # 표 감지 (마크다운 표는 | 문자와 구분선 패턴을 포함)
+        has_table = _contains_markdown_table(content)
+        
+        if has_table:
+            # 표가 포함된 경우, 청크 사이즈를 초과하더라도 분할하지 않음
+            logger.info(f"Table detected, preserving chunk as whole (size={len(content)})")
+            doc.metadata["category"] = "Table"
+            doc.metadata["format"] = "markdown"
+            results.append(doc)
+        else:
+            # 표가 없는 경우, 일반적인 청킹 수행
+            if len(content) > 700:
+                # 크기가 큰 경우 2차 분할
+                chunks = text_splitter.create_documents(
+                    [content],
+                    metadatas=[doc.metadata]
+                )
+                for chunk in chunks:
+                    chunk.metadata["category"] = "Text"
+                    chunk.metadata["format"] = "markdown"
+                results.extend(chunks)
+            else:
+                # 크기가 작으면 그대로 유지
+                doc.metadata["category"] = "Text"
+                doc.metadata["format"] = "markdown"
+                results.append(doc)
+    
+    # 각 Document에 chunk_index 추가
     for idx, doc in enumerate(results):
-        doc.metadata["category"] = "Text"
         doc.metadata["chunk_index"] = idx + 1
 
     logger.info(f"Done chunk_format_md : total_chunks={len(results)}")
     return results
+
+
+def _contains_markdown_table(text: str) -> bool:
+    """마크다운 표 포함 여부 확인"""
+    # 마크다운 표 패턴: 파이프(|)로 구분되고, 구분선(---|---)을 포함
+    lines = text.split('\n')
+    
+    # 최소 3줄 이상 (헤더 + 구분선 + 데이터)
+    if len(lines) < 3:
+        return False
+    
+    pipe_lines = [line for line in lines if '|' in line]
+    
+    # 파이프가 있는 라인이 2개 이상이고
+    if len(pipe_lines) >= 2:
+        # 구분선 패턴을 포함하는지 확인
+        separator_pattern = re.compile(r'^\s*\|?[\s\-:]+\|[\s\-:|]+\|?\s*$')
+        for line in pipe_lines:
+            if separator_pattern.match(line):
+                return True
+    
+    return False
 
 
 # ----------------------------------------------------
