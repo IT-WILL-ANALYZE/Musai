@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  musai:
+    build: .
+    container_name: musai-app
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./rag_resources/uploads:/app/rag_resources/uploads
+      - ./rag_resources/knowledge-base:/app/rag_resources/knowledge-base
+      - ./rag_resources/vectordb:/app/rag_resources/vectordb
+      - ./logs:/app/logs
+    restart: unless-stopped

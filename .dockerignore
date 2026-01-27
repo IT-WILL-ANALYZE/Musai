@@ -1,7 +1,6 @@
-# Environment variables
-.env
-.env.local
-.env.*.local
+# Git
+.git
+.gitignore
 
 # Python
 __pycache__/
@@ -38,7 +37,7 @@ ehthumbs.db
 Thumbs.db
 desktop.ini
 
-# Project specific - RAG resources
+# Project specific
 rag_resources/knowledge-base/
 rag_resources/uploads/
 rag_resources/vectordb/chroma_store/
@@ -50,10 +49,7 @@ rag_resources/vectordb/chroma_store/
 chroma_store/
 
 # Logs
-# Logs
 logs/
-!logs/
-!logs/.gitkeep
 *.log
 
 # Testing
@@ -83,5 +79,13 @@ dmypy.json
 *.bak
 
 # Docker
-.docker/
-docker-volumes/
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation
+README.md
+
+# Environment
+.env.local
+.env.*.local

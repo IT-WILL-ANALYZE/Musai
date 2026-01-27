@@ -1,3 +1,4 @@
+from config import setting
 import streamlit as st
 import copy
 import uuid
@@ -9,13 +10,13 @@ from langchain_core.documents import Document
 # ------------------------------
 # 전역변수/세션관리
 # ------------------------------
-ADMIN_CODE = "musai123"
+ADMIN_CODE = os.getenv("ADMIN_CODE")  # .env에서 읽기, 없으면 기본값
 save_dir = "rag_resources/uploads"
 
 if "admin_step_up" not in st.session_state:
     st.session_state.admin_step_up = 0 # 0 : 기본  / 1 : 청킹 / 2 : 임베딩 / 3: 테스트
 if "admin_verified" not in st.session_state:
-    st.session_state.admin_verified = True
+    st.session_state.admin_verified = True # 관리자 인증 여부 - 기본값 False
 if "test_mode" not in st.session_state:
     st.session_state.test_mode = False
 if "uploader_version" not in st.session_state:
