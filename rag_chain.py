@@ -79,13 +79,13 @@ def get_llm_response_temp(vectordb, query, history):
             | StrOutputParser()
         )
 
-        llm_response = rag_chain.stream({"question": query, "history": history})
-        logger.success(f"Done get_llm_response_temp : {llm_response}")
-        return llm_response
+        # 스트리밍 방식으로 각 토큰을 하나씩 yield
+        for chunk in rag_chain.stream({"question": query, "history": history}):
+            yield chunk
     
     except Exception as e:
         logger.exception(f"Failed get_llm_response_temp : {e}")
-        return llm_response
+        yield ""
 
 
 # chain 생성 및 답변 전달
@@ -107,9 +107,9 @@ def get_llm_response(query, history):
             | StrOutputParser()
         )
 
-        llm_response = rag_chain.stream({"question": query, "history": history})
-        logger.success(f"Done get_llm_response : {llm_response}")
-        return llm_response
+        # 스트리밍 방식으로 각 토큰을 하나씩 yield
+        for chunk in rag_chain.stream({"question": query, "history": history}):
+            yield chunk
     except Exception as e:
         logger.exception(f"Failed get_llm_response : {e}")
-        return llm_response
+        yield ""

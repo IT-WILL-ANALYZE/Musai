@@ -296,7 +296,7 @@ SUGGESTIONS = {
 # ------------------------------
 st.set_page_config(
     page_title="MusAi - 패션분석에 대한 모든 것",
-    page_icon="/images/logo.png",
+    page_icon="🤖",
 )
 
 st.image("images/logo.png", width=120)
@@ -453,20 +453,21 @@ if user_message:
     st.session_state.initial_question = None
     st.session_state.selected_suggestion = None
 
-    # 유저 메시지 저장
+    # 유저 메시지 저장 및 표시
     st.session_state.messages.append({"role": "user", "content": user_message})
+    with st.chat_message("user"):
+        st.write(user_message)
 
-    # --- AI 응답 생성 ---
-    if st.session_state.admin_verified and st.session_state.test_mode and st.session_state.vectordb:
-        with st.spinner("🤔 MusAi가 답변을 생성하고 있어요..."):
+    # --- AI 응답 생성 및 스트리밍 표시 ---
+    with st.chat_message("assistant"):
+        if st.session_state.admin_verified and st.session_state.test_mode and st.session_state.vectordb:
             ai_response = st.write_stream(rag_chain.get_llm_response_temp(
                 st.session_state.vectordb, 
                 user_message,
                 history=st.session_state.messages
             ))
-    else:
-        with st.spinner("🤔 MusAi가 답변을 생성하고 있어요..."):
-            ai_response = st.write_stream(rag_chain.get_llm_response(user_message,history=st.session_state.messages))
+        else:
+            ai_response = st.write_stream(rag_chain.get_llm_response(user_message, history=st.session_state.messages))
 
     # --- assistant 메시지 저장 ---
     st.session_state.messages.append(
