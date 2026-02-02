@@ -24,6 +24,8 @@ st.set_page_config(
 # ------------------------------
 # 세션 상태 초기화
 # ------------------------------
+if "admin_verified" not in st.session_state:
+    st.session_state.admin_verified = False
 if "selected_file" not in st.session_state:
     st.session_state.selected_file = None
 if "knowledge_data" not in st.session_state:
@@ -219,8 +221,12 @@ if st.session_state.admin_verified:
 # 메인 영역: 선택된 파일 표시
 # ------------------------------
 if not st.session_state.selected_file:
-    st.info("👈 사이드바에서 파일을 선택해주세요.")
+    if st.session_state.admin_verified:
+        st.info("👈 사이드바에서 파일을 선택해주세요.")
+    else:
+        st.error("🚨 관리자 모드에서만 접근 가능합니다.")
     st.stop()
+    
 
 data = st.session_state.knowledge_data
 

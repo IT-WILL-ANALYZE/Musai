@@ -95,6 +95,8 @@ filelock==3.20.0
     # via huggingface-hub
 filetype==1.2.0
     # via unstructured
+flashrank==0.2.10
+    # via -r requirements.in
 flatbuffers==25.9.23
     # via onnxruntime
 frozenlist==1.8.0
@@ -232,6 +234,7 @@ nltk==3.9.2
 numpy==2.3.5
     # via
     #   chromadb
+    #   flashrank
     #   langchain-chroma
     #   langchain-community
     #   onnxruntime
@@ -244,7 +247,9 @@ oauthlib==3.3.1
 olefile==0.47
     # via python-oxmsg
 onnxruntime==1.23.2
-    # via chromadb
+    # via
+    #   chromadb
+    #   flashrank
 openai==2.7.1
     # via
     #   -r requirements.in
@@ -340,7 +345,7 @@ pymupdf==1.26.7
     # via
     #   -r requirements.in
     #   pymupdf4llm
-pymupdf4llm==0.2.9
+pymupdf4llm==0.0.17
     # via -r requirements.in
 pypdf==6.3.0
     # via
@@ -393,6 +398,7 @@ regex==2025.11.3
     #   tiktoken
 requests==2.32.5
     # via
+    #   flashrank
     #   kubernetes
     #   langchain-classic
     #   langchain-community
@@ -446,8 +452,6 @@ streamlit==1.53.1
     # via -r requirements.in
 sympy==1.14.0
     # via onnxruntime
-tabulate==0.9.0
-    # via pymupdf4llm
 tenacity==9.1.2
     # via
     #   chromadb
@@ -457,7 +461,9 @@ tenacity==9.1.2
 tiktoken==0.12.0
     # via langchain-openai
 tokenizers==0.22.1
-    # via chromadb
+    # via
+    #   chromadb
+    #   flashrank
 toml==0.10.2
     # via streamlit
 tornado==6.5.4
@@ -465,6 +471,7 @@ tornado==6.5.4
 tqdm==4.67.1
     # via
     #   chromadb
+    #   flashrank
     #   huggingface-hub
     #   nltk
     #   openai

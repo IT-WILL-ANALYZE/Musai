@@ -63,7 +63,8 @@ def get_vectordb(chunked_docs):
 # chain 생성 및 답변 전달(관리자)
 def get_llm_response_temp(vectordb, query, history):
     try:
-        logger.info(f"Start get_llm_response_temp : {query, history}")
+        logger.info("Start get_llm_response_temp")
+        logger.debug(f"[query]='{query}', [history]='{history}'")
 
         retriever = chroma_embed.get_retriever_from_temp(vectordb)
         llm = get_llm("gpt-4.1-mini")
@@ -91,7 +92,8 @@ def get_llm_response_temp(vectordb, query, history):
 # chain 생성 및 답변 전달
 def get_llm_response(query, history):
     try:
-        logger.info(f"Start get_llm_response : {query, history}")
+        logger.info("Start get_llm_response")
+        logger.debug(f"[query]='{query}', [history]='{history}'")
 
         retriever = chroma_embed.get_retriever(query)
         llm = get_llm("gpt-4.1-mini")
@@ -112,4 +114,49 @@ def get_llm_response(query, history):
             yield chunk
     except Exception as e:
         logger.exception(f"Failed get_llm_response : {e}")
+        yield ""
+
+
+# chain 생성 및 답변 전달 (프롬프트 테스트용)
+def get_llm_response_test(query, llm_model, prompt_text, variables=None, use_rag_for_context=False):
+    """
+    프롬프트 테스트용: query, llm_model, prompt_text를 받아 chain 생성 및 스트리밍 답변 전달
+    variables: 프롬프트 템플릿 변수 dict (question, content 등)
+    use_rag_for_context: True 시 VectorDB에서 context 검색하여 사용
+    """
+    try:
+        from langchain_core.prompts import ChatPromptTemplate
+
+        logger.info("Start get_llm_response_test")
+        logger.debug(f"[query]='{query}', [model]='{llm_model}', [use_rag]='{use_rag_for_context}'")
+
+        template = ChatPromptTemplate.from_template(prompt_text)
+        input_vars = set(template.input_variables)
+
+        if variables is None:
+            variables = {}
+
+        # history, context 자동 설정 (템플릿에 해당 변수가 있는 경우)
+        if "history" in input_vars:
+            variables = {**variables, "history": ""}
+        if "context" in input_vars:
+            if use_rag_for_context and query:
+                try:
+                    retriever = chroma_embed.get_retriever(query)
+                    context_docs = retriever.invoke(query)
+                    context = "\n\n".join(doc.page_content for doc in context_docs) if context_docs else ""
+                except Exception as e:
+                    logger.warning(f"VectorDB 검색 실패: {e}")
+                    context = ""
+            else:
+                context = ""
+            variables = {**variables, "context": context}
+
+        llm = get_llm(llm_model)
+        chain = template | llm | StrOutputParser()
+
+        for chunk in chain.stream(variables):
+            yield chunk
+    except Exception as e:
+        logger.exception(f"Failed get_llm_response_test : {e}")
         yield ""
