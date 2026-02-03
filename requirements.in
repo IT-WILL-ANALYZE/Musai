@@ -29,8 +29,8 @@ unstructured>=0.10.30
 # Vector Database
 chromadb>=0.4.0
 
-# Reranking (FlashrankRerank)
-flashrank>=0.2.0
+# Reranking (FlashrankRerank) - not used
+# flashrank>=0.2.0
 
 # OpenAI (for embeddings and LLM)
 openai>=1.0.0

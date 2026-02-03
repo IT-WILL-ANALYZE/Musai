@@ -2,30 +2,23 @@ import json
 import os
 from datetime import datetime
 from loguru import logger
-import config.setting
 from langchain_community.vectorstores.utils import filter_complex_metadata
-from langchain_classic.retrievers import ContextualCompressionRetriever
-from langchain_community.document_compressors.flashrank_rerank import FlashrankRerank
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 
+# 상수 설정
 VECTORDB_DIR = "rag_resources/vectordb/chroma_store"
 KNOWLEDGE_BASE_PATH = "rag_resources/knowledge-base"
 
 embedding = OpenAIEmbeddings(model="text-embedding-3-large")
 
-
 # --------------------------------------------------------
-# JSON 기반 날짜 가중치 매핑
+# 유틸리티 함수 (날짜 로딩 및 가중치 계산)
 # --------------------------------------------------------
 def _load_vector_id_to_created_at() -> dict[str, str]:
-    """
-    knowledge-base JSON 파일을 분석하여 vector_id -> created_at(ISO) 매핑 반환.
-    각 chunk의 vector_id와 상위 meta.created_at을 연결.
-    """
     mapping: dict[str, str] = {}
     try:
         if not os.path.isdir(KNOWLEDGE_BASE_PATH):
@@ -43,20 +36,13 @@ def _load_vector_id_to_created_at() -> dict[str, str]:
                 vid = chunk.get("vector_id")
                 if vid:
                     mapping[vid] = created_at
-        logger.debug(f"Loaded date mapping for {len(mapping)} chunks from knowledge-base")
     except Exception as e:
         logger.warning(f"Failed to load date mapping: {e}")
-        
     return mapping
 
-
 def _date_weight(created_at_str: str, decay_per_day: float = 0.01) -> float:
-    """
-    created_at(ISO 문자열) 기준 날짜 가중치 계산. 최신일수록 1에 가깝고, 오래될수록 감소.
-    decay_per_day: 일 단위 감쇠율 (0.01 = 100일 경과 시 약 0.37)
-    """
     if not created_at_str:
-        return 0.5  # 정보 없으면 중립
+        return 0.5
     try:
         created = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
         if created.tzinfo:
@@ -64,22 +50,17 @@ def _date_weight(created_at_str: str, decay_per_day: float = 0.01) -> float:
     except (ValueError, TypeError):
         return 0.5
     days_old = max(0, (datetime.now() - created).days)
-    
     return (1.0 - decay_per_day) ** days_old
 
-
 # --------------------------------------------------------
-# Chroma + 날짜 가중치 커스텀 Retriever
+# Chroma + 날짜 가중치 커스텀 Retriever (FlashRank 대안)
 # --------------------------------------------------------
 class DateWeightedChromaRetriever(BaseRetriever):
-    """
-    Chroma 유사도 검색 후 JSON 기반 created_at 날짜 가중치를 적용한 Retriever.
-    """
-
     vectorstore: Chroma
-    search_k: int = 20
-    date_decay_per_day: float = 0.01 # 0~1, 날짜 가중치 감소 비율
-    date_weight_factor: float = 0.3  # 0~1, 유사도 대비 날짜 가중치 비중
+    search_k: int = 10  # 후보군 10개
+    top_n: int = 5     # 최종 반환 5개
+    date_decay_per_day: float = 0.01 # 0.01~0.05 : 최신성 강조 / 0.1~0.2 : 최신성 약조
+    date_weight_factor: float = 0.4  # 0.2~0.3 : 유사도 위주 / 0.5 ~ : 최신성 강조
 
     def _get_relevant_documents(
         self,
@@ -87,8 +68,9 @@ class DateWeightedChromaRetriever(BaseRetriever):
         *,
         run_manager: CallbackManagerForRetrieverRun | None = None,
     ) -> list[Document]:
-        logger.info(f"Start DateWeightedChromaRetriever : [query]='{query}', [search_k]={self.search_k}")
+        logger.info(f"Retrieving: {query} (k={self.search_k}, top_n={self.top_n})")
 
+        # 1. 유사도 검색 (점수 포함)
         docs_and_scores = self.vectorstore.similarity_search_with_score(
             query, k=self.search_k
         )
@@ -96,112 +78,52 @@ class DateWeightedChromaRetriever(BaseRetriever):
 
         scored: list[tuple[Document, float]] = []
         for doc, distance in docs_and_scores:
-            # Chroma distance: 낮을수록 유사. relevance = 1/(1+d) 로 변환
+            # 2. 유사도 점수 정규화 (유사도 점수 높을수록 1에 가깝게)
             relevance = 1.0 / (1.0 + max(0, distance))
-            # vector_id: Chroma Document.id 또는 metadata
+            
+            # 3. 날짜 가중치 계산
             vid = getattr(doc, "id", None) or doc.metadata.get("vector_id", "")
             created_at = mapping.get(vid, "")
             dw = _date_weight(created_at, self.date_decay_per_day)
-            # combined = relevance * (1 - date_factor + date_factor * date_weight)
+            
+            # 4. 결합 점수 계산
             combined = relevance * (1.0 - self.date_weight_factor + self.date_weight_factor * dw)
             scored.append((doc, combined))
 
+        # 5. 결합 점수 기준 재정렬 후 상위 top_n개만 반환
         scored.sort(key=lambda x: x[1], reverse=True)
-
-        return [d for d, _ in scored]
-
-
-# --------------------------------------------------------
-# 임시 vectordb 생성 (메모리 기반)
-# --------------------------------------------------------
-def get_temp_vectordb(chunked_docs):
-    logger.info(f"Start get_temp_vectordb : docs={len(chunked_docs)}")
-    try:
-        chunked_docs = filter_complex_metadata(chunked_docs)
-        vectordb = Chroma.from_documents(chunked_docs, embedding)
         
-        return vectordb
-
-    except Exception as e:
-        logger.exception(f"Failed get_temp_vectordb : {e}")
-        raise
-
-
-# --------------------------------------------------------
-# 영구 vectordb 생성 또는 업데이트
-# --------------------------------------------------------
-def build_or_update_vectordb(chunked_docs):
-    logger.info(f"Start build_or_update_vectordb : [VECTORDB_DIR]={VECTORDB_DIR} [docs]={len(chunked_docs)}")
-
-    try:
-        chunked_docs = filter_complex_metadata(chunked_docs)
-        vectordb = Chroma(
-            embedding_function=embedding,
-            persist_directory=VECTORDB_DIR
-        )
-
-        # add_documents는 자동 저장
-        vector_ids = vectordb.add_documents(chunked_docs)
-
-        return vector_ids
-
-    except Exception as e:
-        logger.exception(f"Failed build_or_update_vectordb : {e}")
-        raise
-
-
-# --------------------------------------------------------
-# TEMP vectordb에서 retriever 생성
-# --------------------------------------------------------
-def get_retriever_from_temp(vectordb):
-    logger.debug(f"Start get_retriever_from_temp")
-    
-    try:
-        retriever = vectordb.as_retriever(
-            search_kwargs={"k": 5},
-            search_type="similarity"
-        )
-        
-        return retriever
-
-    except Exception as e:
-        logger.exception(f"Failed get_retriever_from_temp : {e}")
-        raise
-
+        final_docs = [d for d, _ in scored[:self.top_n]]
+        logger.debug(f"[retrieved_docs]={final_docs}")
+        return final_docs
 
 # --------------------------------------------------------
 # Persistent vectordb에서 retriever 생성
 # --------------------------------------------------------
 def get_retriever(query: str):
     """
-    1. Chroma 유지 (저장 안정성)
-    2. JSON knowledge-base 분석 → 날짜 가중치 적용 (DateWeightedChromaRetriever)
-    3. FlashRank 리랭킹 (가볍고 빠른 의미적 정밀도)
-    retriever 객체 반환 (invoke(question) 호출로 문서 검색)
+    1. Chroma 연결 (text-embedding-3-large 사용)
+    2. DateWeightedChromaRetriever: 10개 추출 -> 날짜 가중치 적용 -> 상위 5개 반환
+    (FlashRank 제거로 메모리 절약)
     """
     logger.info(f"Start get_retriever : [query]='{query}'")
 
     try:
-        # 1. Chroma 연결
         vectordb = Chroma(
             persist_directory=VECTORDB_DIR,
             embedding_function=embedding,
         )
 
-        # 2. Chroma + JSON 날짜 가중치 Retriever (1단계: Recall + 날짜 보정)
-        date_weighted_retriever = DateWeightedChromaRetriever(vectorstore=vectordb)
-
-        # 3. FlashRank 리랭커 (2단계: Precision, 한국어 MultiBERT) # ms-marco-MiniLM-L-6-v2
-        compressor = FlashrankRerank(model="ms-marco-MultiBERT-L-12", top_n=5)
-
-        # 4. 두 단계 결합하여 retriever 반환 (rag_chain에서 invoke 호출)
-        compression_retriever = ContextualCompressionRetriever(
-            base_compressor=compressor,
-            base_retriever=date_weighted_retriever,
+        # 리랭커 없이 날짜 가중치 기반 리트리버 반환
+        retriever = DateWeightedChromaRetriever(
+            vectorstore=vectordb,
+            search_k=10,         # 처음 검색할 후보 수
+            top_n=3,             # 최종적으로 LLM에게 줄 문서 수
+            date_decay_per_day=0.01,
+            date_weight_factor=0.4
         )
-        logger.info(f"Done get_retriever : {compression_retriever}")
 
-        return compression_retriever
+        return retriever
 
     except Exception as e:
         logger.exception(f"Failed get_retriever : {e}")
