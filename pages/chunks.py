@@ -152,7 +152,7 @@ def sync_to_vectordb(data):
         # 4. 새 vector 추가
         documents = filter_complex_metadata(documents)
         new_vector_ids = vectordb.add_documents(documents)
-        logger.success(f"Added {len(new_vector_ids)} new vectors")
+        logger.info(f"Added {len(new_vector_ids)} new vectors")
         
         # 5. JSON 데이터에 새 vector_id 업데이트
         for i, chunk in enumerate(data["chunks"]):
@@ -300,7 +300,7 @@ else:
                 "Content",
                 value=chunk.get("content", ""),
                 height=200,
-                key=f"edit_{chunk_id}_{idx}",
+                key=f"edit_{st.session_state.selected_file}_{idx}",
                 label_visibility="collapsed"
             )
             
@@ -309,17 +309,17 @@ else:
             btn_col1, btn_col2, btn_col3 = st.columns(3)
             
             with btn_col1:
-                if st.button("💾 저장", key=f"save_{chunk_id}_{idx}", type="primary", use_container_width=True):
+                if st.button("💾 저장", key=f"save_{st.session_state.selected_file}_{idx}", type="primary", use_container_width=True):
                     # 내용 업데이트
                     chunk["content"] = edited_content
                     save_chunk_idx = idx
             
             with btn_col2:
-                if st.button("➕ 추가", key=f"add_{chunk_id}_{idx}", type="secondary", use_container_width=True):
+                if st.button("➕ 추가", key=f"add_{st.session_state.selected_file}_{idx}", type="secondary", use_container_width=True):
                     add_after_idx = idx
             
             with btn_col3:
-                if st.button("🗑 삭제", key=f"delete_{chunk_id}_{idx}", type="secondary", use_container_width=True):
+                if st.button("🗑 삭제", key=f"delete_{st.session_state.selected_file}_{idx}", type="secondary", use_container_width=True):
                     delete_chunk_idx = idx
 
     # 저장 처리 (해당 chunk만)

@@ -150,7 +150,7 @@ def get_temp_vectordb(chunked_docs):
 
 
 # --------------------------------------------------------
-# 영구 vectordb 생성 또는 업데이트
+# vectordb 생성 또는 업데이트
 # --------------------------------------------------------
 def build_or_update_vectordb(chunked_docs):
     logger.info(f"Start build_or_update_vectordb : [VECTORDB_DIR]={VECTORDB_DIR} [docs]={len(chunked_docs)}")
