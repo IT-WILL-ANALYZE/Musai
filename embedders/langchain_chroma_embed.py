@@ -15,6 +15,7 @@ KNOWLEDGE_BASE_PATH = "rag_resources/knowledge-base"
 
 embedding = OpenAIEmbeddings(model="text-embedding-3-large")
 
+
 # --------------------------------------------------------
 # 유틸리티 함수 (날짜 로딩 및 가중치 계산)
 # --------------------------------------------------------
@@ -51,6 +52,7 @@ def _date_weight(created_at_str: str, decay_per_day: float = 0.01) -> float:
         return 0.5
     days_old = max(0, (datetime.now() - created).days)
     return (1.0 - decay_per_day) ** days_old
+
 
 # --------------------------------------------------------
 # Chroma + 날짜 가중치 커스텀 Retriever (FlashRank 대안)
@@ -97,6 +99,7 @@ class DateWeightedChromaRetriever(BaseRetriever):
         logger.debug(f"[retrieved_docs]={final_docs}")
         return final_docs
 
+
 # --------------------------------------------------------
 # Persistent vectordb에서 retriever 생성
 # --------------------------------------------------------
@@ -128,3 +131,63 @@ def get_retriever(query: str):
     except Exception as e:
         logger.exception(f"Failed get_retriever : {e}")
         raise
+
+
+# --------------------------------------------------------
+# 임시 vectordb 생성 (메모리 기반)
+# --------------------------------------------------------
+def get_temp_vectordb(chunked_docs):
+    logger.info(f"Start get_temp_vectordb : docs={len(chunked_docs)}")
+    try:
+        chunked_docs = filter_complex_metadata(chunked_docs)
+        vectordb = Chroma.from_documents(chunked_docs, embedding)
+        
+        return vectordb
+
+    except Exception as e:
+        logger.exception(f"Failed get_temp_vectordb : {e}")
+        raise
+
+
+# --------------------------------------------------------
+# 영구 vectordb 생성 또는 업데이트
+# --------------------------------------------------------
+def build_or_update_vectordb(chunked_docs):
+    logger.info(f"Start build_or_update_vectordb : [VECTORDB_DIR]={VECTORDB_DIR} [docs]={len(chunked_docs)}")
+
+    try:
+        chunked_docs = filter_complex_metadata(chunked_docs)
+        vectordb = Chroma(
+            embedding_function=embedding,
+            persist_directory=VECTORDB_DIR
+        )
+
+        # add_documents는 자동 저장
+        vector_ids = vectordb.add_documents(chunked_docs)
+
+        return vector_ids
+
+    except Exception as e:
+        logger.exception(f"Failed build_or_update_vectordb : {e}")
+        raise
+
+
+# --------------------------------------------------------
+# TEMP vectordb에서 retriever 생성
+# --------------------------------------------------------
+def get_retriever_from_temp(vectordb):
+    logger.debug(f"Start get_retriever_from_temp")
+    
+    try:
+        retriever = vectordb.as_retriever(
+            search_kwargs={"k": 5},
+            search_type="similarity"
+        )
+        
+        return retriever
+
+    except Exception as e:
+        logger.exception(f"Failed get_retriever_from_temp : {e}")
+        raise
+
+

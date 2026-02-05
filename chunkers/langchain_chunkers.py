@@ -91,7 +91,6 @@ def chunk_format_md(content_md: str):
         strip_headers=False
     )
     
-    logger.info(f"text_content_md={content_md}")
     # 헤더 기반 분할 수행
     header_splits = markdown_splitter.split_text(content_md)
     
