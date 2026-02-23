@@ -12,5 +12,6 @@ services:
       - ./rag_resources/uploads:/app/rag_resources/uploads
       - ./rag_resources/knowledge-base:/app/rag_resources/knowledge-base
       - ./rag_resources/vectordb:/app/rag_resources/vectordb
+      - ./prompts:/app/prompts
       - ./logs:/app/logs
     restart: unless-stopped

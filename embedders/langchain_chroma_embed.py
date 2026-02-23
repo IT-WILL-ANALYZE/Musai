@@ -103,33 +103,37 @@ class DateWeightedChromaRetriever(BaseRetriever):
 # --------------------------------------------------------
 # Persistent vectordb에서 retriever 생성
 # --------------------------------------------------------
-def get_retriever(query: str):
+def set_retriever(vectordb: Chroma | None = None):
     """
-    1. Chroma 연결 (text-embedding-3-large 사용)
-    2. DateWeightedChromaRetriever: 10개 추출 -> 날짜 가중치 적용 -> 상위 5개 반환
-    (FlashRank 제거로 메모리 절약)
+    - vectordb=None: Persistent Chroma 연결 후 DateWeightedChromaRetriever 반환
+    - vectordb!=None: 전달받은 (보통 메모리 기반) Chroma에서 similarity retriever 반환
     """
-    logger.info(f"Start get_retriever : [query]='{query}'")
+    logger.info("Start set_retriever")
 
     try:
-        vectordb = Chroma(
-            persist_directory=VECTORDB_DIR,
-            embedding_function=embedding,
-        )
+        if vectordb is None:
+            persistent_vectordb = Chroma(
+                persist_directory=VECTORDB_DIR,
+                embedding_function=embedding,
+            )
 
-        # 리랭커 없이 날짜 가중치 기반 리트리버 반환
-        retriever = DateWeightedChromaRetriever(
-            vectorstore=vectordb,
-            search_k=10,         # 처음 검색할 후보 수
-            top_n=3,             # 최종적으로 LLM에게 줄 문서 수
-            date_decay_per_day=0.01,
-            date_weight_factor=0.4
-        )
+            # 리랭커 없이 날짜 가중치 기반 리트리버 반환
+            return DateWeightedChromaRetriever(
+                vectorstore=persistent_vectordb,
+                search_k=10,         # 처음 검색할 후보 수
+                top_n=3,             # 최종적으로 LLM에게 줄 문서 수
+                date_decay_per_day=0.01,
+                date_weight_factor=0.4,
+            )
 
-        return retriever
+        # TEMP / in-memory vectordb는 기본 similarity retriever 사용
+        return vectordb.as_retriever(
+            search_kwargs={"k": 5},
+            search_type="similarity",
+        )
 
     except Exception as e:
-        logger.exception(f"Failed get_retriever : {e}")
+        logger.exception(f"Failed set_retriever : {e}")
         raise
 
 
@@ -169,25 +173,6 @@ def build_or_update_vectordb(chunked_docs):
 
     except Exception as e:
         logger.exception(f"Failed build_or_update_vectordb : {e}")
-        raise
-
-
-# --------------------------------------------------------
-# TEMP vectordb에서 retriever 생성
-# --------------------------------------------------------
-def get_retriever_from_temp(vectordb):
-    logger.debug(f"Start get_retriever_from_temp")
-    
-    try:
-        retriever = vectordb.as_retriever(
-            search_kwargs={"k": 5},
-            search_type="similarity"
-        )
-        
-        return retriever
-
-    except Exception as e:
-        logger.exception(f"Failed get_retriever_from_temp : {e}")
         raise
 
 
