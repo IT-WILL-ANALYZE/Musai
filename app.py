@@ -16,7 +16,7 @@ save_dir = "rag_resources/uploads"
 if "admin_step_up" not in st.session_state:
     st.session_state.admin_step_up = 0 # 0 : 기본  / 1 : 청킹 / 2 : 임베딩 / 3: 테스트
 if "admin_verified" not in st.session_state:
-    st.session_state.admin_verified = True # 관리자 인증 여부 - 기본값 False
+    st.session_state.admin_verified = False # 관리자 인증 여부 - 기본값 False
 if "test_mode" not in st.session_state:
     st.session_state.test_mode = False
 if "uploader_version" not in st.session_state:
@@ -220,12 +220,19 @@ def render_chunk_manager():
 # ------------------------------
 # 다이어로그(Modal)
 # ------------------------------
-@st.dialog("MusAi란")
+@st.dialog("OOTData란")
 def show_who_am_i():
-    st.caption("""
-        Musai란 무신사의 데이터를 기반으로 최신 트렌드 및...\n
-        어쩌구 저쩌구\n
-        ...
+    st.markdown("**OOTData**는 *'Outfit Of The Data'*의 약자로, **데이터 기반의 착장**을 의미합니다.")
+    st.markdown("2025년 12월까지의 무신사 데이터를 분석해 최신 트렌드와 패션 정보를 제공하는 AI 챗봇이며, LangChain과 OpenAI로 문서 기반 질의응답을 구현했습니다.")
+    st.markdown("---")
+    st.markdown("**주요 기능**")
+    st.markdown("""
+    - **문서 지원** — PDF, DOCX, TXT, MD, CSV, XLSX 등 다양한 형식
+    - **스마트 청킹** — LLM 기반 자동 문서 분할, 결과 수동 편집·관리
+    - **벡터 검색** — ChromaDB 기반 유사도 검색
+    - **대화형 UI** — Streamlit 기반 직관적 인터페이스
+    - **관리자 모드** — 문서 업로드, 청킹, 임베딩, 프롬프트 테스트
+    - **배포** — Docker 지원
     """)
     
 @st.dialog("관리자모드")
@@ -285,9 +292,27 @@ def show_upload_file():
 # 예시 질문
 # ------------------------------
 SUGGESTIONS = {
-    ":blue[:material/local_library:] MusAi가 뭔가요?": "MusAi가 뭔가요?",
-    ":green[:material/local_library:] 최신 트렌드에 대해 조사해줘": "최신 트렌드에 대해 조사해줘",
-    ":red[:material/local_library:] (무신사 상품번호)에 대해 조사해줘": "(무신사 상품번호)에 대해 조사해줘",
+    ":blue[:material/info:] OOTData란": "OOTData가 뭔가요?",
+    ":green[:material/thumb_up:] 리뷰 반응이 좋은 제품": "리뷰 반응이 좋은 제품은 뭐야?",
+    ":red[:material/category:] 최근 인기있는 카테고리": "최근 인기있는 카테고리는 뭐야?",
+    ":violet[:material/trending_up:] 신상품 중 리뷰 성장률이 가장 빠른 제품": "신상품 중 리뷰 성장률이 가장 빠른 제품은 뭐야?",
+    ":orange[:material/show_chart:] 최근 3개월 간 리뷰 수가 상승/하락한 제품": "최근 3개월 간 리뷰 수가 상승/하락한 제품은 뭐가 있을까?",
+    ":yellow[:material/calendar_month:] 리뷰가 가장 많이 작성된 월": "리뷰가 가장 많이 작성된 월은 언제인지 알려줘",
+    ":blue[:material/straighten:] 특정 체형 구간에서만 평점 편차가 큰 제품": "특정 체형 구간에서만 평점 편차가 큰 제품은?",
+    ":green[:material/group:] 성별에 따른 만족도 차이가 가장 큰 카테고리": "성별에 따른 만족도 차이가 가장 큰 카테고리는?",
+    ":red[:material/shopping_cart:] 구매 시 가장 고려하는 요소": "사람들이 구매 시 가장 고려하는 요소는 뭐야?",
+    ":violet[:material/event_available:] 상황별 만족도": "상황별 만족도는 어떻게 되는지 알려줘. '데이트, 운동, 데일리 등 상황 키워드를 분석해줘.",
+    ":orange[:material/swap_horiz:] 한 번 사보고 다른 브랜드로 이동한 사람들의 이유": "한 번 사보고 다른 브랜드로 갈 가능성이 높은 포인트는 뭘까?",
+    ":yellow[:material/loyalty:] 추가 구매로 이어지게 만드는 핵심 요소": "추가 구매로 이어지게 만드는 핵심 요소는 뭐야? \n만족요인을 정리해줘.",
+    ":blue[:material/rate_review:] 재구매 의사 확인 방법": "재구매 의사 확인 방법은 뭐야? \n재구매/추천 리뷰에서 반복되는 문장을 추출 및 분석해줘/",
+    ":green[:material/fact_check:] 구매 결정 순간": "사람들의 구매 결정 순간은 언제일까?",
+    ":red[:material/palette:] 로고, 프린트 디자인 평가": "로고나 프린트 디자인에 대한 평가는?",
+    ":violet[:material/style:] 데이트/소개팅 상의 특성": "데이트/소개팅 맥락에서 언급되는 상의 스타일 특성",
+    ":orange[:material/wb_sunny:] 인기있는 여름 반팔티": "여름 반팔티 칭찬 포인트 유형은 뭐가 있을까?",
+    ":yellow[:material/thermostat:] 두께감, 무게감 언급과 계절의 연관성": "두께감, 무게감 언급과 계절 착용방식에 대해 분석해줘.",
+    ":blue[:material/sentiment_dissatisfied:] 불만 리뷰 유형": "불만 리뷰가 많은 상품의 주요 불만 유형에는 뭐가있을까?",
+    ":green[:material/accessibility_new:] 체형 커버 언급 상품 만족도": "체형 커버(어깨, 팔뚝, 복부 등) 언급 상품의 만족 유형은 어떤 것이 있을까?",
+    ":red[:material/wb_sunny:] 여름 시즌 상의 스타일": "여름 시즌 기준으로 뜨는 상의 스타일 정리해줘.",
 }
 
 
@@ -295,15 +320,13 @@ SUGGESTIONS = {
 # 기본 UI 설정
 # ------------------------------
 st.set_page_config(
-    page_title="MusAi - 패션분석에 대한 모든 것",
+    page_title="OOTData - Outfit Of The Data",
     page_icon="🤖",
 )
 
-st.image("images/logo.png", width=120)
-
 title_row = st.container(
     horizontal=True,
-    vertical_alignment="bottom",
+    vertical_alignment="center",
 )
 
 # ------------------------------
@@ -328,8 +351,8 @@ def clear_conversation():
     st.session_state.selected_suggestion = None
 
 with title_row:
-    # title_row 안에서
-    st.title("MusAi (Admin)" if st.session_state.admin_verified else "MusAi", anchor=False, width="stretch")
+    st.image("images/logo.png", width=120)
+    st.title("Admin" if st.session_state.admin_verified else "", anchor=False, width="stretch")
 
 
     # 채팅이 시작된 이후에만 Restart 보여주기
@@ -374,11 +397,11 @@ if not user_first_interaction and not has_message_history:
         )
 
     # 하단 버튼 (좌 / 우 배치)
-    left, spacer, right = st.columns([1, 6, 1.2])
+    left, spacer, right = st.columns([1.5, 6, 1.5])
 
     with left:
         st.button(
-            "&nbsp;:small[:gray[:material/Cognition: MusAi란]]",
+            "&nbsp;:small[:gray[:material/Cognition: OOTData란]]",
             type="tertiary",
             on_click=show_who_am_i,
             use_container_width=True,

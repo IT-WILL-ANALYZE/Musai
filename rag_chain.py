@@ -97,9 +97,9 @@ def get_llm_response(question, history, vectordb=None):
     app.py에서 spinner 문구 + st.write_stream(stream) 사용.
     """
     spinner_text = (
-        "🧪 MusAi가 테스트 모드로 답변을 생성하고 있어요..."
+        "🧪 OOTData가 테스트 모드로 답변을 생성하고 있어요..."
         if vectordb is not None
-        else "🤔 MusAi가 답변을 생성하고 있어요..."
+        else "🤔 OOTData가 답변을 생성하고 있어요..."
     )
 
     def _stream():
@@ -107,11 +107,11 @@ def get_llm_response(question, history, vectordb=None):
             logger.info("Start get_llm_response")
             history_limited = _limit_history(history, max_messages=5)  # 최근 이력 5개만 사용(토큰비용 절약)
             logger.debug(f"[question]='{question}', [history(last5)]='{history_limited}'")
-
+            llm = get_llm("gpt-5.2")
             # 1) 전처리 question 분석 (optimizer는 JSON 배열 문자열 반환)
             optimizer_chain = (
                 get_prompt("released_optimizer.txt")
-                | get_llm("gpt-4.1-mini")
+                | llm
                 | StrOutputParser()
             )
             optimizer_output = optimizer_chain.invoke(
@@ -157,7 +157,7 @@ def get_llm_response(question, history, vectordb=None):
                     "context": lambda x: x["context"],
                 }
                 | get_prompt("released_responser.txt")
-                | get_llm("gpt-5")
+                | llm
                 | StrOutputParser()
             )
 

@@ -19,7 +19,7 @@ except Exception:
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
 
 st.set_page_config(
-    page_title="MusAi - 프롬프트 관리",
+    page_title="OOTData - 프롬프트 관리",
     page_icon="📝",
     layout="wide"
 )

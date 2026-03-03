@@ -16,7 +16,7 @@ VECTORDB_DIR = "rag_resources/vectordb/chroma_store"
 embedding = OpenAIEmbeddings(model="text-embedding-3-large")
 
 st.set_page_config(
-    page_title="MusAi - 데이터 관리",
+    page_title="OOTData - 데이터 관리",
     page_icon="🔧",
     layout="wide"
 )

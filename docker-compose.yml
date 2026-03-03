@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  musai:
+  ootdata:
     build: .
-    container_name: musai-app
+    container_name: ootdata-app
     ports:
       - "8501:8501"
     env_file:
