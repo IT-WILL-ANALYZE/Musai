@@ -21,11 +21,13 @@ from datetime import datetime
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from loguru import logger
 from langchain_core.documents import Document
 import embedders.langchain_chroma_embed as chroma_embed
 from etl.langchain_stores import store_knowledgebase
-
 
 # 경로 설정
 BASIC_DATA_DIR = Path(__file__).parent

@@ -3,6 +3,7 @@ version: '3.8'
 services:
   ootdata:
     build: .
+    image: ootdata
     container_name: ootdata-app
     ports:
       - "8501:8501"
