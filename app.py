@@ -351,7 +351,7 @@ def clear_conversation():
     st.session_state.selected_suggestion = None
 
 with title_row:
-    st.image("images/logo.png", width=120)
+    st.image("images/logo.png", width=300)
     st.title("Admin" if st.session_state.admin_verified else "", anchor=False, width="stretch")
 
 
