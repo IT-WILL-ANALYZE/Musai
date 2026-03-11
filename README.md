@@ -170,7 +170,7 @@ OOTData/
 │   └── logo.png
 │
 ├── rag_resources/                  # 데이터 저장소
-│   ├── basic-data/                 # 기본 데이터
+│   ├── basic-data/                 # 기본 데이터 - 초기 데이터 셋팅(해당 폴더의 READ.ME참조)
 │   ├── knowledge-base/             # 청킹된 문서 메타데이터
 │   ├── uploads/                    # 업로드된 원본 파일
 │   └── vectordb/                   # 벡터 데이터베이스
@@ -187,7 +187,6 @@ OOTData/
 ├── requirements.in                 # 핵심 의존성
 ├── requirements.txt                # 전체 의존성 (pip-compile 생성)
 ├── .env.example                    # 환경 변수 예시
-├── ootd.md                         # 챗봇 소개 문서 (청킹용)
 └── README.md
 ```
 
